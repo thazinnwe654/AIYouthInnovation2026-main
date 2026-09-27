@@ -52,6 +52,12 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+    # A judge/head judge account needs a Judge profile row, otherwise every
+    # judge endpoint rejects it with "User is not a judge".
+    if role in ("JUDGE", "HEAD_JUDGE"):
+        if not db.query(models.Judge).filter(models.Judge.user_id == user.id).first():
+            db.add(models.Judge(user_id=user.id))
+            db.commit()
     # Audit log for user creation
     audit = models.AuditLog(
         user_id=admin.id,
@@ -62,7 +68,12 @@ def create_user(
     db.add(audit)
     db.commit()
     db.refresh(audit)
-    return {"id": user.id, "email": user.email, "role": user.role.value}
+    return {
+        "id": user.id,
+        "email": user.email,
+        "role": user.role.value,
+        "judge_profile_created": role in ("JUDGE", "HEAD_JUDGE"),
+    }
 
 
 @router.get("/evaluation-criteria")

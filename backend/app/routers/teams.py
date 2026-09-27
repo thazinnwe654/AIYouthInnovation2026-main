@@ -222,9 +222,38 @@ def delete_team(
     team = db.get(models.Team, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+
+    # Delete dependants explicitly. Relying on ORM defaults sets
+    # submissions.team_id to NULL, which violates its NOT NULL constraint.
+    submission_ids = [
+        s.id
+        for s in db.query(models.Submission)
+        .filter(models.Submission.team_id == team_id)
+        .all()
+    ]
+    if submission_ids:
+        db.query(models.SubmissionFile).filter(
+            models.SubmissionFile.submission_id.in_(submission_ids)
+        ).delete(synchronize_session=False)
+    db.query(models.Submission).filter(
+        models.Submission.team_id == team_id
+    ).delete(synchronize_session=False)
+    db.query(models.Evaluation).filter(
+        models.Evaluation.team_id == team_id
+    ).delete(synchronize_session=False)
+    db.query(models.JudgeAssignment).filter(
+        models.JudgeAssignment.team_id == team_id
+    ).delete(synchronize_session=False)
+    db.query(models.TeamMember).filter(
+        models.TeamMember.team_id == team_id
+    ).delete(synchronize_session=False)
+
     db.delete(team)
     db.commit()
-    return {"detail": "Team deleted"}
+    return {
+        "detail": "Team deleted",
+        "submissions_deleted": len(submission_ids),
+    }
 
 
 @router.delete("/{team_id}/members/{user_id}")

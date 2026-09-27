@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from datetime import datetime, timezone
 
 from ..database import get_db
@@ -92,6 +92,22 @@ def _require_judge_or_head(current_user: models.User = Depends(get_current_user)
     return current_user
 
 
+def _judge_record(db: Session, user: models.User) -> models.Judge:
+    """Return the Judge profile for a user, creating it on first use.
+
+    Accounts created by an admin before this existed have no Judge row, which used
+    to make every judge endpoint fail with "User is not a judge". Self-healing
+    here keeps new and legacy judge accounts working without a manual step.
+    """
+    judge = db.query(models.Judge).filter(models.Judge.user_id == user.id).first()
+    if judge is None and user.role in (models.UserRole.JUDGE, models.UserRole.HEAD_JUDGE):
+        judge = models.Judge(user_id=user.id)
+        db.add(judge)
+        db.commit()
+        db.refresh(judge)
+    return judge
+
+
 @router.post("")
 def create_judge(
     user_id: int,
@@ -138,14 +154,94 @@ def create_assignment(
     return {"id": assignment.id}
 
 
+@router.get("")
+def list_judges(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("ADMIN")),
+):
+    """ADMIN: judge profiles with their assignment counts."""
+    counts = dict(
+        db.query(models.JudgeAssignment.judge_id, func.count(models.JudgeAssignment.id))
+        .group_by(models.JudgeAssignment.judge_id)
+        .all()
+    )
+    return [
+        {
+            "id": j.id,
+            "user_id": j.user_id,
+            "email": j.user.email if j.user else None,
+            "role": j.user.role.value if j.user else None,
+            "assignment_count": counts.get(j.id, 0),
+        }
+        for j in db.query(models.Judge).all()
+    ]
+
+
+@router.post("/assignments/bulk")
+def create_bulk_assignments(
+    judge_id: int,
+    competition_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("ADMIN")),
+):
+    """Assign a judge to every team of a competition (skips existing rows)."""
+    judge = _get_or_404(db, models.Judge, judge_id)
+    comp = _get_or_404(db, models.Competition, competition_id)
+    existing = {
+        (ja.team_id, ja.competition_id)
+        for ja in db.query(models.JudgeAssignment)
+        .filter(models.JudgeAssignment.judge_id == judge.id)
+        .all()
+    }
+    created = 0
+    for team in comp.teams:
+        if (team.id, competition_id) in existing:
+            continue
+        db.add(
+            models.JudgeAssignment(
+                judge_id=judge.id,
+                team_id=team.id,
+                competition_id=competition_id,
+                assigned_by=current_user.id,
+            )
+        )
+        created += 1
+    db.commit()
+    return {
+        "judge_id": judge.id,
+        "competition_id": competition_id,
+        "created": created,
+        "total_teams": len(comp.teams),
+    }
+
+
+@router.get("/assignments")
+def list_assignments(
+    judge_id: int = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("ADMIN")),
+):
+    """ADMIN: list assignments, optionally filtered by judge."""
+    query = db.query(models.JudgeAssignment)
+    if judge_id is not None:
+        query = query.filter(models.JudgeAssignment.judge_id == judge_id)
+    return [
+        {
+            "id": a.id,
+            "judge_id": a.judge_id,
+            "team_id": a.team_id,
+            "competition_id": a.competition_id,
+        }
+        for a in query.all()
+    ]
+
+
 @router.get("/my-assignments")
 def list_my_assignments(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(_require_judge_or_head),
 ):
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User is not a judge"
@@ -189,9 +285,7 @@ def create_my_evaluation(
     current_user: models.User = Depends(_require_judge_or_head),
     request: Request = None,
 ):
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User is not a judge"
@@ -292,8 +386,25 @@ def create_evaluation(
 
 
 def _validate_score(score: float, criterion: models.EvaluationCriteria) -> int:
-    """Validate score is integer 1 to criterion.weight. Returns int score."""
-    score_int = round(score)
+    """Validate score is a whole number 1..criterion.weight. Returns the int score."""
+    if score is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Score must be a whole number between 1 and {criterion.weight}",
+        )
+    try:
+        numeric = float(score)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Score must be a whole number between 1 and {criterion.weight}",
+        )
+    if numeric != int(numeric):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Score must be a whole number between 1 and {criterion.weight}",
+        )
+    score_int = int(numeric)
     if score_int < 1 or score_int > criterion.weight:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -334,9 +445,7 @@ def add_score(
     request: Request = None,
 ):
     evaluation = _get_or_404(db, models.Evaluation, evaluation_id)
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge or evaluation.judge_id != judge.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -402,9 +511,7 @@ def clear_evaluation(
     evaluation = db.get(models.Evaluation, evaluation_id)
     if evaluation is None:
         return {"cleared": True, "evaluation_id": evaluation_id, "score_count": 0}
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge or evaluation.judge_id != judge.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -433,6 +540,109 @@ def clear_evaluation(
 
 
 # ─── HEAD_JUDGE: view all judges' scores ─────────────────────────────────────
+
+
+@router.get("/submitted-teams")
+def get_submitted_teams(
+    comp_id: int = None,
+    only_with_files: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(_require_judge_or_head),
+):
+    """List teams that actually submitted, with per-team submission facts.
+
+    A team only counts as a real submitter once at least one file has been
+    uploaded (`has_files`). Pass `only_with_files=true` to exclude teams that
+    still have empty submission rows.
+
+    Read-only visibility only: no file records are returned, so this does not
+    widen file download access, which stays restricted to judge assignments.
+    """
+    judge = _judge_record(db, current_user)
+    assigned_team_ids = set()
+    if judge:
+        assigned_team_ids = {
+            ja.team_id
+            for ja in db.query(models.JudgeAssignment)
+            .filter(models.JudgeAssignment.judge_id == judge.id)
+            .all()
+        }
+
+    query = db.query(models.Submission).join(
+        models.Deliverable,
+        models.Submission.deliverable_id == models.Deliverable.id,
+    )
+    if comp_id is not None:
+        query = query.filter(models.Deliverable.competition_id == comp_id)
+
+    teams = {}
+    for sub in query.all():
+        deliverable = db.get(models.Deliverable, sub.deliverable_id)
+        team = db.get(models.Team, sub.team_id)
+        competition = (
+            db.get(models.Competition, deliverable.competition_id)
+            if deliverable
+            else None
+        )
+        file_count = (
+            db.query(models.SubmissionFile)
+            .filter(models.SubmissionFile.submission_id == sub.id)
+            .count()
+        )
+        competition_id = deliverable.competition_id if deliverable else None
+        key = (sub.team_id, competition_id)
+        entry = teams.get(key)
+        if entry is None:
+            entry = {
+                "team_id": sub.team_id,
+                "team_name": team.name if team else None,
+                "competition_id": competition_id,
+                "competition_name": competition.name if competition else None,
+                "competition_category": competition.category if competition else None,
+                "is_assigned": sub.team_id in assigned_team_ids,
+                "submission_count": 0,
+                "file_count": 0,
+                "deliverables_with_files": 0,
+                "deliverables_finalized": 0,
+                "categories": [],
+                "statuses": [],
+                "last_updated_at": None,
+            }
+            teams[key] = entry
+        entry["submission_count"] += 1
+        entry["file_count"] += file_count
+        if file_count > 0:
+            entry["deliverables_with_files"] += 1
+        if sub.status == models.SubmissionStatus.SUBMITTED:
+            entry["deliverables_finalized"] += 1
+        category = deliverable.category if deliverable else None
+        if category and category not in entry["categories"]:
+            entry["categories"].append(category)
+        if sub.status.value not in entry["statuses"]:
+            entry["statuses"].append(sub.status.value)
+        if sub.updated_at and (
+            entry["last_updated_at"] is None
+            or sub.updated_at > entry["last_updated_at"]
+        ):
+            entry["last_updated_at"] = sub.updated_at
+
+    deliverables_per_comp = dict(
+        db.query(models.Deliverable.competition_id, func.count(models.Deliverable.id))
+        .group_by(models.Deliverable.competition_id)
+        .all()
+    )
+
+    result = []
+    for entry in teams.values():
+        entry["has_files"] = entry["file_count"] > 0
+        entry["deliverables_total"] = deliverables_per_comp.get(
+            entry["competition_id"], entry["submission_count"]
+        )
+        if only_with_files and not entry["has_files"]:
+            continue
+        result.append(entry)
+
+    return sorted(result, key=lambda t: (t["competition_id"] or 0, t["team_id"]))
 
 
 @router.get("/all-scores")
@@ -690,9 +900,7 @@ def list_my_evaluations(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(_require_judge_or_head),
 ):
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User is not a judge"
@@ -732,9 +940,7 @@ def get_competition_scores(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(_require_judge_or_head),
 ):
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User is not a judge"
@@ -916,9 +1122,7 @@ def get_judge_all_submissions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(_require_judge_or_head),
 ):
-    judge = (
-        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
-    )
+    judge = _judge_record(db, current_user)
     if not judge:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User is not a judge"

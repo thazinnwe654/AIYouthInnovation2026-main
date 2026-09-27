@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import { getMyTeam, getMyTeamSubmissions } from '../api/teams'
 import { listDeliverables, createSubmission, addFile, getSubmissionFiles, downloadFile, deleteFile, submitSubmission } from '../api/deliverables'
 import { getRankings } from '../api/competitions'
 import { getFileIcon, formatFileSize } from '../utils'
 
 export default function TeamUploads() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'ADMIN'
   const [team, setTeam] = useState(null)
+  const [notMember, setNotMember] = useState(false)
   const [deliverables, setDeliverables] = useState([])
   const [submissions, setSubmissions] = useState([])
   const [files, setFiles] = useState({})
@@ -31,6 +36,7 @@ export default function TeamUploads() {
   const load = async () => {
     setLoading(true)
     setError('')
+    setNotMember(false)
     try {
       const myTeam = await getMyTeam()
       setTeam(myTeam)
@@ -49,7 +55,12 @@ export default function TeamUploads() {
       setFiles(filesMap)
       await loadRankings(myTeam.competition_id)
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load upload page')
+      const detail = err.response?.data?.detail || ''
+      if (err.response?.status === 404 && detail.toLowerCase().includes('not a member')) {
+        setNotMember(true)
+      } else {
+        setError(detail || 'Failed to load upload page')
+      }
     } finally {
       setLoading(false)
     }
@@ -117,8 +128,45 @@ export default function TeamUploads() {
   }
 
   if (loading) return <div className="p-6">Loading...</div>
+  if (notMember) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <h1 className="text-2xl font-bold mb-3">My Uploads</h1>
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6">
+          <p className="text-lg font-semibold text-amber-900">Your account is not linked to a team yet</p>
+          <p className="mt-2 text-base text-amber-800">
+            File uploads are always made by a team, so your account has to be added as a member of a team
+            before this page can show anything.
+          </p>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-base text-amber-900">
+            <li>Ask an administrator to add your email ({user?.email}) to your team.</li>
+            {isAdmin && <li>Or add it yourself in Manage Teams: open the team, choose Manage members, then enter your email.</li>}
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Link to="/uploads" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+              Go to My Uploads
+            </Link>
+            {isAdmin && (
+              <Link to="/teams" className="rounded-lg border border-amber-400 bg-white px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">
+                Go to Manage Teams
+              </Link>
+            )}
+            <Link to="/dashboard" className="rounded-lg border border-amber-400 bg-white px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">
+              Back to Dashboard
+            </Link>
+            <button
+              onClick={() => load()}
+              className="rounded-lg border border-amber-400 bg-white px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Check again
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
   if (error) return <div className="p-6 text-red-600">{error}</div>
-  if (!team) return <div className="p-6">You are not assigned to any team.</div>
+  if (!team) return <div className="p-6">Loading your team...</div>
 
   return (
     <div className="p-6 max-w-4xl mx-auto">

@@ -96,7 +96,7 @@ def change_password(
 @limiter.limit(get_limit("RATE_LIMIT_RESET_PASSWORD", "5/minute"))
 def reset_password(
     user_id: int = Body(...),
-    new_password: str = Body(...),
+    new_password: str = Body(default=""),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("ADMIN")),
     request: Request = None,
@@ -106,9 +106,16 @@ def reset_password(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
+    new_password = (new_password or "").strip()
     if not new_password:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Password cannot be empty"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Enter a new password (at least 6 characters)",
+        )
+    if len(new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 6 characters",
         )
     user.password_hash = get_password_hash(new_password)
     db.commit()

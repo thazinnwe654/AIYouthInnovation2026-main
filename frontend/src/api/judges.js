@@ -1,7 +1,10 @@
 import api from './client'
 
 export const createJudge = (userId) => api.post('/judges', null, { params: { user_id: userId } }).then(r => r.data)
+export const listJudges = () => api.get('/judges').then(r => r.data)
 export const createAssignment = (judgeId, teamId, compId) => api.post('/judges/assignments', null, { params: { judge_id: judgeId, team_id: teamId, competition_id: compId } }).then(r => r.data)
+export const createBulkAssignments = (judgeId, compId) => api.post('/judges/assignments/bulk', null, { params: { judge_id: judgeId, competition_id: compId } }).then(r => r.data)
+export const listAssignments = (judgeId) => api.get('/judges/assignments', { params: { judge_id: judgeId } }).then(r => r.data)
 export const listEvaluations = (compId) => api.get(`/judges/competitions/${compId}/evaluations`).then(r => r.data)
 export const createEvaluation = (judgeId, teamId, compId) => api.post('/judges/evaluations', null, { params: { judge_id: judgeId, team_id: teamId, competition_id: compId } }).then(r => r.data)
 export const addScore = (evalId, criterionId, score, comment) => api.post(`/judges/evaluations/${evalId}/scores`, null, { params: { criterion_id: criterionId, score, comment } }).then(r => r.data)
@@ -15,6 +18,7 @@ export const createMyEvaluation = (teamId, compId) => api.post('/judges/evaluati
 export const getCompetitionScores = (compId) => api.get(`/judges/competitions/${compId}/scores`).then(r => r.data)
 export const listMyEvaluations = (compId) => api.get('/judges/evaluations', { params: { comp_id: compId } }).then(r => r.data)
 export const getJudgeAllSubmissions = () => api.get('/judges/submissions').then(r => r.data)
+export const getSubmittedTeams = (compId, onlyWithFiles = false) => api.get('/judges/submitted-teams', { params: { ...(compId ? { comp_id: compId } : {}), ...(onlyWithFiles ? { only_with_files: true } : {}) } }).then(r => r.data)
 export const getAllScores = (competitionId) => api.get('/judges/all-scores', { params: { competition_id: competitionId } }).then(r => r.data)
 export const getAveragedScores = (competitionId) => api.get('/judges/competitions/' + competitionId + '/averaged-scores').then(r => r.data)
 export const populateEvaluations = (competitionId) => api.post('/judges/competitions/' + competitionId + '/populate-evaluations').then(r => r.data)

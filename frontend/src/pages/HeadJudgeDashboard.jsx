@@ -57,9 +57,9 @@ export default function HeadJudgeDashboard() {
     }
   }
 
-  const loadAllScores = async (competitionId) => {
+  const loadAllScores = async (competitionId, silent = false) => {
     if (!competitionId) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError('')
     try {
       const [data, avgData] = await Promise.all([
@@ -71,7 +71,7 @@ export default function HeadJudgeDashboard() {
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load scores')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -85,7 +85,7 @@ export default function HeadJudgeDashboard() {
       const result = await updateEvaluationStatus(evalId, newStatus, reason || undefined)
       if (result.changed) {
         showMsg(`Evaluation ${newStatus.toLowerCase()}d successfully`)
-        await loadAllScores(compId)
+        await loadAllScores(compId, true)
         if (activeEval?.evaluation_id === evalId) {
           setActiveEval(prev => ({ ...prev, status: newStatus }))
         }
@@ -109,7 +109,7 @@ export default function HeadJudgeDashboard() {
       setCorrectModal(null)
       setCorrectScoreValue('')
       setCorrectReason('')
-      await loadAllScores(compId)
+      await loadAllScores(compId, true)
       if (activeEval) loadAudit(activeEval.evaluation_id)
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to correct score')
@@ -131,7 +131,7 @@ export default function HeadJudgeDashboard() {
       }
     }
     showMsg(`Bulk ${targetStatus.toLowerCase()}: ${success} succeeded${failed ? `, ${failed} failed` : ''}`)
-    await loadAllScores(compId)
+    await loadAllScores(compId, true)
     setBulkStatus('')
     setBulkReason('')
     setShowBulkReason(false)
@@ -252,7 +252,7 @@ export default function HeadJudgeDashboard() {
                     <td className="p-3 font-bold text-indigo-600">#{idx + 1}</td>
                     <td className="p-3 font-medium">{team.team_name || 'Team ' + team.team_id}</td>
                     <td className="p-3 text-center">{team.num_judges}</td>
-                    <td className="p-3 text-center font-bold">{team.total_score} / {team.max_possible}</td>
+                    <td className="p-3 text-center font-bold">{team.total_score} / {team.max_score ?? team.max_possible ?? 100}</td>
                     {criteria.map(c => {
                       const cs = team.criterion_scores[c.name]
                       return (
@@ -410,16 +410,31 @@ export default function HeadJudgeDashboard() {
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium mb-1">New Score (1-{criteria.find(c => c.id === correctModal?.criterion_id)?.weight || 10})</label>
-                <input
-                  type="number"
-                  min="1"
-                  max={criteria.find(c => c.id === correctModal?.criterion_id)?.weight || 10}
-                  step="1"
-                  value={correctScoreValue}
-                  onChange={e => setCorrectScoreValue(e.target.value)}
-                  className="w-full border rounded px-3 py-2"
-                  autoFocus
-                />
+                  <input
+                    type="number"
+                    min="1"
+                    max={criteria.find(c => c.id === correctModal?.criterion_id)?.weight || 10}
+                    step="1"
+                    value={correctScoreValue}
+                    onChange={e => {
+                      const raw = e.target.value.trim()
+                      if (raw === '') { setCorrectScoreValue(''); return }
+                      if (!/^\d+$/.test(raw)) {
+                        setError('Score must be a whole number')
+                        return
+                      }
+                      const v = parseInt(raw, 10)
+                      const max = criteria.find(c => c.id === correctModal?.criterion_id)?.weight || 10
+                      if (v < 1 || v > max) {
+                        setError(`Score must be a whole number between 1 and ${max}`)
+                        return
+                      }
+                      setError('')
+                      setCorrectScoreValue(raw)
+                    }}
+                    className="w-full border rounded px-3 py-2"
+                    autoFocus
+                  />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Reason (required)</label>

@@ -6,7 +6,7 @@ from ..database import get_db
 from .. import models
 from ..models import CompetitionCategory
 from ..security import get_current_user, require_role
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 router = APIRouter(prefix="/competitions", tags=["competitions"])
 
@@ -162,33 +162,51 @@ def leaderboard(
     comp = db.get(models.Competition, competition_id)
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-    results = (
-        db.query(
-            models.Team.id,
-            models.Team.name,
-            func.coalesce(func.sum(models.EvaluationScore.score), 0).label("total"),
-            func.count(models.EvaluationScore.id).label("num"),
+
+    judge = (
+        db.query(models.Judge).filter(models.Judge.user_id == current_user.id).first()
+    )
+
+    # Per-team totals contributed by the signed-in judge only.
+    own_totals = {}
+    if judge:
+        own_rows = (
+            db.query(
+                models.Evaluation.team_id,
+                func.coalesce(func.sum(models.EvaluationScore.score), 0),
+                func.count(models.EvaluationScore.id),
+            )
+            .join(
+                models.EvaluationScore,
+                models.EvaluationScore.evaluation_id == models.Evaluation.id,
+            )
+            .filter(models.Evaluation.judge_id == judge.id)
+            .group_by(models.Evaluation.team_id)
+            .all()
         )
-        .outerjoin(models.Evaluation, models.Evaluation.team_id == models.Team.id)
-        .outerjoin(
-            models.EvaluationScore,
-            models.EvaluationScore.evaluation_id == models.Evaluation.id,
-        )
+        own_totals = {r[0]: (float(r[1]), r[2]) for r in own_rows}
+
+    teams = (
+        db.query(models.Team.id, models.Team.name)
         .filter(models.Team.competition_id == competition_id)
-        .group_by(models.Team.id, models.Team.name)
-        .order_by(func.coalesce(func.sum(models.EvaluationScore.score), 0).desc())
         .all()
     )
-    return [
-        {
-            "rank": i + 1,
-            "team_id": r[0],
-            "team_name": r[1],
-            "total_score": float(r[2]),
-            "num_scores": r[3],
-        }
-        for i, r in enumerate(results)
-    ]
+    result = []
+    for team_id, team_name in teams:
+        total, count = own_totals.get(team_id, (0.0, 0))
+        result.append(
+            {
+                "team_id": team_id,
+                "team_name": team_name,
+                "total_score": total,
+                "num_scores": count,
+                "scope": "own",
+            }
+        )
+    result.sort(key=lambda t: (-t["total_score"], t["team_id"]))
+    for i, item in enumerate(result):
+        item["rank"] = i + 1
+    return result
 
 
 @router.get("/{competition_id}/rankings")

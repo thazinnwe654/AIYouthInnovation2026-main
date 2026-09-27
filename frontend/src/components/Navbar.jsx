@@ -33,25 +33,28 @@ export default function Navbar() {
   }
 
   return (
-    <nav className="bg-indigo-600 text-white px-6 py-3 flex justify-between items-center shadow-lg min-h-[72px]">
-      <div className="flex items-center gap-4">
-        <img src="/STI-Myanmar-College-Logo.jpg" alt="STI Logo" className="h-16 w-auto object-contain" />
-        <Link to="/" className="text-xl font-bold tracking-tight">Myanmar Youth AI Innovation Competition 2026</Link>
-      </div>
-      <div className="flex gap-3 items-center text-sm">
+    <nav className="bg-indigo-600 text-white px-4 sm:px-6 py-3 shadow-lg">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <img src="/STI-Myanmar-College-Logo.jpg" alt="STI Logo" className="h-12 sm:h-16 w-auto object-contain shrink-0" />
+          <Link to="/" className="text-base sm:text-xl font-bold tracking-tight truncate">
+            Myanmar Youth AI Innovation Competition 2026
+          </Link>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         {user ? (
           <>
-            <Link to="/dashboard" className="hover:text-indigo-200 px-2 py-1">Dashboard</Link>
-            {isAdmin && <Link to="/competitions" className="hover:text-indigo-200 px-2 py-1">Competitions</Link>}
-            {isAdmin && <Link to="/teams" className="hover:text-indigo-200 px-2 py-1">Teams</Link>}
-            {isTeamMember && <Link to="/uploads" className="hover:text-indigo-200 px-2 py-1">My Uploads</Link>}
-             {isAdmin && <Link to="/judges" className="hover:text-indigo-200 px-2 py-1">Judges</Link>}
-              {isJudge && <Link to="/judge-dashboard" className="hover:text-indigo-200 px-2 py-1">Judge Dashboard</Link>}
-              {isJudge && <Link to="/scoreboard" className="hover:text-indigo-200 px-2 py-1">Scoreboard</Link>}
-              {isHeadJudge && <Link to="/head-judge-dashboard" className="hover:text-indigo-200 px-2 py-1 font-semibold">Head Judge</Link>}
-            {isAdmin && <Link to="/users" className="hover:text-indigo-200 px-2 py-1">Users</Link>}
-            {isAdmin && <Link to="/audit-logs" className="hover:text-indigo-200 px-2 py-1">Logs</Link>}
-            <span className="text-indigo-200 ml-2">{user.email}</span>
+            <Link to="/dashboard" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Dashboard</Link>
+            {isAdmin && <Link to="/competitions" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Competitions</Link>}
+            {isAdmin && <Link to="/teams" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Teams</Link>}
+            {isTeamMember && <Link to="/uploads" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">My Uploads</Link>}
+             {isAdmin && <Link to="/judges" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Judges</Link>}
+              {isJudge && <Link to="/judge-dashboard" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Judge Dashboard</Link>}
+              {(isHeadJudge || isAdmin) && <Link to="/scoreboard" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Scoreboard</Link>}
+              {isHeadJudge && <Link to="/head-judge-dashboard" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap font-semibold">Head Judge</Link>}
+            {isAdmin && <Link to="/users" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Users</Link>}
+            {isAdmin && <Link to="/audit-logs" className="hover:text-indigo-200 px-2 py-1 whitespace-nowrap">Logs</Link>}
+            <span className="text-indigo-200 ml-2 truncate max-w-[180px] sm:max-w-none" title={user.email}>{user.email}</span>
             {!showPwForm ? (
               <button onClick={() => setShowPwForm(true)} className="text-indigo-200 hover:text-indigo-100 px-2 py-1 text-sm border border-indigo-400 rounded">Change PW</button>
             ) : (
@@ -70,6 +73,7 @@ export default function Navbar() {
         ) : (
           <Link to="/login" className="hover:text-indigo-200">Login</Link>
         )}
+        </div>
       </div>
     </nav>
   )
