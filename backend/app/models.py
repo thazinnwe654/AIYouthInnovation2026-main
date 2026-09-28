@@ -220,6 +220,11 @@ class Team(Base):
         nullable=False,
     )
 
+    product_name = Column(
+        String,
+        nullable=True,
+    )
+
     competition_id = Column(
         Integer,
         ForeignKey("competitions.id"),

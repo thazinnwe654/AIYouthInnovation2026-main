@@ -9,6 +9,7 @@ export default function AdminTeams() {
   const [comps, setComps] = useState([])
   const [users, setUsers] = useState([])
   const [name, setName] = useState('')
+  const [productName, setProductName] = useState('')
   const [compId, setCompId] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
@@ -28,8 +29,9 @@ export default function AdminTeams() {
     e.preventDefault()
     setErr(''); setMsg('')
     try {
-      await createTeam({ name, competition_id: parseInt(compId) })
+      await createTeam({ name, competition_id: parseInt(compId), product_name: productName.trim() || null })
       setName('')
+      setProductName('')
       setMsg('Team created! Now add the member accounts below so they can upload files.')
       load()
     } catch (e2) { setErr(e2.response?.data?.detail || 'Error') }
@@ -90,8 +92,9 @@ export default function AdminTeams() {
         <h2 className="text-lg font-semibold mb-4">Create New Team</h2>
         {msg && <div className="bg-emerald-100 text-emerald-800 p-3 rounded mb-3 text-sm">{msg}</div>}
         {err && <div className="bg-red-100 text-red-800 p-3 rounded mb-3 text-sm">{err}</div>}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <input type="text" placeholder="Team Name" value={name} onChange={e => setName(e.target.value)} className="border p-3 rounded" required />
+          <input type="text" placeholder="Project Name (optional)" value={productName} onChange={e => setProductName(e.target.value)} className="border p-3 rounded" />
           <select value={compId} onChange={e => setCompId(e.target.value)} className="border p-3 rounded" required>
             <option value="">Select Competition</option>
             {comps.map(c => <option key={c.id} value={c.id}>{c.name} ({c.category})</option>)}
@@ -105,7 +108,8 @@ export default function AdminTeams() {
           <thead className="bg-gray-50">
             <tr>
               <th className="p-3">ID</th>
-              <th className="p-3">Name</th>
+              <th className="p-3">Team Name</th>
+              <th className="p-3">Project Name</th>
               <th className="p-3">Competition</th>
               <th className="p-3">Members</th>
               <th className="p-3">Actions</th>
@@ -117,6 +121,9 @@ export default function AdminTeams() {
                 <tr className="border-t hover:bg-gray-50">
                   <td className="p-3">{t.id}</td>
                   <td className="p-3 font-medium">{t.name}</td>
+                  <td className="p-3 text-sm text-indigo-600 font-medium">
+                    {t.product_name || <span className="text-slate-400 font-normal">—</span>}
+                  </td>
                   <td className="p-3 text-sm">
                     {comps.find(c => c.id === t.competition_id)?.name || t.competition_id}
                   </td>
@@ -131,7 +138,7 @@ export default function AdminTeams() {
                 </tr>
                 {openTeam === t.id && (
                   <tr className="border-t bg-slate-50">
-                    <td colSpan="5" className="p-4">
+                    <td colSpan="6" className="p-4">
                       <h3 className="font-semibold text-slate-800 mb-3">Members of {t.name}</h3>
                       {members.length === 0 ? (
                         <p className="text-sm text-slate-600 mb-3">

@@ -261,6 +261,7 @@ def list_my_assignments(
                 "judge_id": a.judge_id,
                 "team_id": a.team_id,
                 "team_name": team.name if team else None,
+                "product_name": team.product_name if team else None,
                 "competition_id": a.competition_id,
                 "competition_name": comp.name if comp else None,
                 "assigned_at": a.assigned_at,
@@ -596,6 +597,7 @@ def get_submitted_teams(
             entry = {
                 "team_id": sub.team_id,
                 "team_name": team.name if team else None,
+                "product_name": team.product_name if team else None,
                 "competition_id": competition_id,
                 "competition_name": competition.name if competition else None,
                 "competition_category": competition.category if competition else None,
@@ -994,8 +996,9 @@ def get_competition_scores(
         result.append(
             {
                 "team_id": team_id,
-                "team_name": team.name if team else None,
-                "total_score": round(total, 1),
+            "team_name": team.name if team else None,
+            "product_name": team.product_name if team else None,
+            "total_score": round(total, 1),
                 "criteria_scores": team_scores,
                 "num_judges": num_judges,
                 "max_possible": sum(c.weight for c in criteria),
@@ -1075,6 +1078,7 @@ def get_averaged_scores(
             team_data[t] = {
                 "team_id": t,
                 "team_name": team.name if team else None,
+                "product_name": team.product_name if team else None,
                 "criterion_scores": {},
                 "total_score": 0.0,
                 "num_judges": 0,
@@ -1164,6 +1168,7 @@ def get_judge_all_submissions(
                 "submission_id": sub.id,
                 "team_id": sub.team_id,
                 "team_name": team.name if team else None,
+                "product_name": team.product_name if team else None,
                 "deliverable_id": sub.deliverable_id,
                 "deliverable_name": deliverable.name if deliverable else None,
                 "deliverable_category": deliverable.category if deliverable else None,

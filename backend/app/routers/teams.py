@@ -10,6 +10,7 @@ from ..security import get_current_user, require_role
 class TeamCreate(BaseModel):
     name: str
     competition_id: int
+    product_name: str = None
 
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -64,13 +65,18 @@ def create_team(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Team with this name already exists in the competition",
         )
-    new_team = models.Team(name=team.name, competition_id=team.competition_id)
+    new_team = models.Team(
+        name=team.name,
+        competition_id=team.competition_id,
+        product_name=team.product_name,
+    )
     db.add(new_team)
     db.commit()
     db.refresh(new_team)
     return {
         "id": new_team.id,
         "name": new_team.name,
+        "product_name": new_team.product_name,
         "competition_id": new_team.competition_id,
     }
 
@@ -94,6 +100,7 @@ def get_my_team(
     return {
         "id": team.id,
         "name": team.name,
+        "product_name": team.product_name,
         "competition_id": team.competition_id,
         "members": [
             {
@@ -174,6 +181,7 @@ def get_team(
     return {
         "id": team.id,
         "name": team.name,
+        "product_name": team.product_name,
         "competition_id": team.competition_id,
         "members": [
             {

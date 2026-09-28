@@ -40,19 +40,38 @@ const sortOptions = [
   { key: 'files', label: 'Most files' },
 ]
 
-const criterionTones = [
-  { chip: 'bg-indigo-100 text-indigo-700 border-indigo-200', dot: 'bg-indigo-500', left: 'border-l-indigo-500' },
-  { chip: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', left: 'border-l-emerald-500' },
-  { chip: 'bg-amber-100 text-amber-700 border-amber-200', dot: 'bg-amber-500', left: 'border-l-amber-500' },
-  { chip: 'bg-sky-100 text-sky-700 border-sky-200', dot: 'bg-sky-500', left: 'border-l-sky-500' },
-  { chip: 'bg-rose-100 text-rose-700 border-rose-200', dot: 'bg-rose-500', left: 'border-l-rose-500' },
-  { chip: 'bg-violet-100 text-violet-700 border-violet-200', dot: 'bg-violet-500', left: 'border-l-violet-500' },
-]
+function Chevron({ expanded }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-hidden="true"
+      className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+    >
+      <path
+        fillRule="evenodd"
+        d="M5.23 7.21a.75.75 0 011.06.02L10 11.19l3.71-3.96a.75.75 0 111.08 1.04l-4.25 4.53a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+        clipRule="evenodd"
+      />
+    </svg>
+  )
+}
 
-const quickScores = [
-  { label: 'Low', pct: 0.5 },
-  { label: 'Good', pct: 0.75 },
-  { label: 'Top', pct: 1 },
+// One button style for every show/hide control, so the labels stay explicit
+// about what is being hidden instead of a bare "Hide" or "Collapse".
+const toggleButtonClass =
+  'inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-100'
+
+// One palette entry per competition category: the dot marks it, the text colour
+// separates the category headings at a glance, and the rule underlines the
+// section so a long list of teams stays readable.
+const TONE_PALETTE = [
+  { dot: 'bg-indigo-500', name: 'text-indigo-700', count: 'text-indigo-500', rule: 'bg-indigo-200' },
+  { dot: 'bg-emerald-500', name: 'text-emerald-700', count: 'text-emerald-600', rule: 'bg-emerald-200' },
+  { dot: 'bg-amber-500', name: 'text-amber-700', count: 'text-amber-600', rule: 'bg-amber-200' },
+  { dot: 'bg-sky-500', name: 'text-sky-700', count: 'text-sky-600', rule: 'bg-sky-200' },
+  { dot: 'bg-rose-500', name: 'text-rose-700', count: 'text-rose-600', rule: 'bg-rose-200' },
+  { dot: 'bg-violet-500', name: 'text-violet-700', count: 'text-violet-600', rule: 'bg-violet-200' },
 ]
 
 export default function JudgeDashboard() {
@@ -82,7 +101,9 @@ export default function JudgeDashboard() {
   const [scoreErrors, setScoreErrors] = useState({})
   const [scoreStatus, setScoreStatus] = useState({})
   const [collapsed, setCollapsed] = useState({})
-  const [showGuide, setShowGuide] = useState(true)
+  const [showGuide, setShowGuide] = useState(false)
+  const [showFiles, setShowFiles] = useState({})
+  const [pendingFocus, setPendingFocus] = useState(null)
   const scoreInputs = useRef({})
 
   useEffect(() => {
@@ -234,6 +255,7 @@ export default function JudgeDashboard() {
         setTimeout(() => setScoreStatus(prev => ({ ...prev, [localKey]: '' })), 2500)
       }
       await refreshScoresQuietly()
+      return true
     } catch (err) {
       const msg = err.response?.data?.detail || 'Failed to submit score'
       if (localKey) {
@@ -244,6 +266,7 @@ export default function JudgeDashboard() {
       } else {
         setError(msg)
       }
+      return false
     }
   }
 
@@ -269,68 +292,161 @@ export default function JudgeDashboard() {
     }
   }
 
-  const applyScore = (teamId, criterion, localKey) => {
-    const val = localScores[localKey]
-    if (val === '' || val === undefined) return
-    handleScoreSubmit(teamId, criterion.id, val, notes[localKey] || '', localKey)
+  const applyScore = async (teamId, criterion, localKey) => {
+    const raw = localScores[localKey]
+    if (raw === '' || raw === undefined || raw === null) return
+    const val = parseInt(String(raw), 10)
+    if (Number.isNaN(val) || val < 1 || val > criterion.weight) return
+    const alreadySaved = savedScoreFor(teamId, criterion)
+    const saved = await handleScoreSubmit(teamId, criterion.id, val, notes[localKey] || '', localKey)
+    // Only react to a real change, so re-saving an untouched box does not
+    // pull the judge off the team they are correcting.
+    if (saved && alreadySaved !== val) advanceAfterTeamDone(localKey)
   }
 
-  const moveFocus = (teamId, criterion, direction) => {
-    const idx = criteria.findIndex(c => c.id === criterion.id)
-    const target = criteria[idx + direction]
-    if (!target) return
-    const el = scoreInputs.current[`${teamId}-${target.id}`]
-    if (el) el.focus()
-  }
-
-  const focusTeam = (teamId, criterionIndex = 0) => {
-    const criterion = criteria[criterionIndex]
-    if (!criterion) return
-    setCollapsed(prev => ({ ...prev, [`${teamId}`]: false }))
-    const el = scoreInputs.current[`${teamId}-${criterion.id}`]
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.focus()
+  // Leaving a box settles it: a clean whole number in range is saved, and
+  // anything else (empty, "05", "35" on a 30-point criterion) falls back to the
+  // last score the server accepted.
+  const commitScore = (teamId, criterion, localKey) => {
+    const raw = String(localScores[localKey] ?? '').trim()
+    if (raw === '') {
+      setLocalScores(prev => ({ ...prev, [localKey]: '' }))
+      clearFieldError(localKey)
+      return
     }
+    const val = parseInt(raw, 10)
+    if (Number.isNaN(val) || val < 1 || val > criterion.weight) {
+      const saved = savedScoreFor(teamId, criterion)
+      setLocalScores(prev => ({ ...prev, [localKey]: saved !== undefined ? saved : '' }))
+      setScoreErrors(prev => ({ ...prev, [localKey]: `Enter 1-${criterion.weight}` }))
+      return
+    }
+    if (String(val) !== raw) setLocalScores(prev => ({ ...prev, [localKey]: val }))
+    clearFieldError(localKey)
+    applyScore(teamId, criterion, localKey)
+  }
+
+  const focusScoreKey = (key) => {
+    const el = scoreInputs.current[key]
+    if (!el) return false
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.focus()
+    if (typeof el.select === 'function') el.select()
+    return true
+  }
+
+  const teamIdOf = (key) => key.slice(0, key.indexOf('-'))
+
+  // A box can be inside a collapsed team or a collapsed category, so the
+  // element may not exist yet. Ask for it, and focus it once React has rendered.
+  const requestFocus = (key) => {
+    const teamId = teamIdOf(key)
+    setCollapsed(prev => (prev[teamId] ? { ...prev, [teamId]: false } : prev))
+    const row = visibleScoreRows.find(t => String(t.team_id) === teamId)
+    if (row) {
+      const catKey = `cat:${categoryOf(row)}`
+      setCollapsed(prev => (prev[catKey] ? { ...prev, [catKey]: false } : prev))
+    }
+    setPendingFocus(key)
+  }
+
+  const gotoScoreKey = (key) => {
+    if (!key) return
+    if (!focusScoreKey(key)) requestFocus(key)
+  }
+
+  useEffect(() => {
+    if (!pendingFocus) return
+    if (focusScoreKey(pendingFocus)) setPendingFocus(null)
+  }, [pendingFocus])
+
+  const stepScore = (localKey, delta) => {
+    const idx = scoreOrder.indexOf(localKey)
+    if (idx === -1) return
+    gotoScoreKey(scoreOrder[idx + delta])
+  }
+
+  // scoreOrder is team-major (every criterion of a team, then the next team), so
+  // jumping one team up or down is a jump of exactly one team width.
+  const stepTeam = (localKey, delta) => {
+    const idx = scoreOrder.indexOf(localKey)
+    if (idx === -1) return
+    gotoScoreKey(scoreOrder[idx + delta * Math.max(criteria.length, 1)])
+  }
+
+  const savedScoreFor = (teamId, criterion) =>
+    getEvaluationForTeam(teamId)?.scores
+      ?.find(s => s.criterion_id === criterion.id || s.criterion === criterion.name)?.score
+
+  const clearFieldError = (localKey) =>
+    setScoreErrors(prev => {
+      if (!(localKey in prev)) return prev
+      const next = { ...prev }
+      delete next[localKey]
+      return next
+    })
+
+  const isScoreFilled = (value, weight) => {
+    const raw = String(value ?? '').trim()
+    if (raw === '') return false
+    const n = parseInt(raw, 10)
+    return !Number.isNaN(n) && n >= 1 && n <= weight
+  }
+
+  const teamIsFilled = (teamId) => {
+    const prefix = `${teamId}-`
+    const keys = scoreOrder.filter(k => k.startsWith(prefix))
+    if (keys.length === 0) return false
+    return keys.every(k => {
+      const critId = Number(k.slice(k.indexOf('-') + 1))
+      const crit = criteria.find(c => c.id === critId)
+      return isScoreFilled(localScores[k], crit ? crit.weight : maxScore)
+    })
+  }
+
+  // Finishing the last box of a team pulls the next team into view by itself,
+  // so the judge never has to reach for a "next" button.
+  const advanceAfterTeamDone = (localKey) => {
+    const teamId = teamIdOf(localKey)
+    if (!teamIsFilled(teamId)) return
+    // The save is async. If the judge has already tabbed into another box and
+    // started typing, Tab/Enter already did the moving, so stay out of the way.
+    const activeKey = document.activeElement?.getAttribute?.('data-score-key')
+    if (activeKey && activeKey !== localKey) return
+    const idx = scoreOrder.indexOf(localKey)
+    gotoScoreKey(scoreOrder[idx + 1])
   }
 
   const renderCategoryHeader = (cat, catRows, catStat, tone) => {
     const catKey = `cat:${cat}`
     const catCollapsed = Boolean(collapsed[catKey])
-    const catNext = catRows.find(x => x.isAssigned && !x.isComplete)
+    // Progress is always "scored out of the teams that submitted", never out of
+    // every team in the category.
+    const submitted = catStat ? catStat.withFiles : 0
+    const done = catStat ? catStat.scored : catRows.filter(x => x.isComplete).length
     return (
-      <div className={`rounded-2xl border border-l-4 border-slate-200 bg-white px-5 py-4 shadow-sm ${tone.left}`}>
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className={`h-3 w-3 shrink-0 rounded-full ${tone.dot}`} />
-              <p className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">Category</p>
-            </div>
-            <h3 className="truncate text-xl font-bold text-slate-900">{cat}</h3>
-            <p className="mt-1 text-base text-slate-600">
-              {catRows.length} team(s) shown · {catRows.filter(x => x.isComplete).length} fully scored · {catRows.reduce((n, x) => n + (x.file_count || 0), 0)} file(s) to review
-              {catStat ? ` · ${catStat.teams} team(s) submitted in total` : ''}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {catNext && (
-              <button
-                onClick={() => focusTeam(catNext.team_id)}
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700"
-              >
-                Score next in this category
-              </button>
-            )}
+      <div className="px-1 pt-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone.dot}`} />
+          <h3 className={`truncate text-sm font-bold uppercase tracking-wider ${tone.name}`}>{cat}</h3>
+          <span className={`text-sm font-medium tabular-nums ${tone.count}`}>
+            {done}/{submitted} scored
+            {catStat ? ` · ${catStat.files} file${catStat.files === 1 ? '' : 's'}` : ''}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
             {catRows.length > 0 && (
               <button
                 onClick={() => setCollapsed(prev => ({ ...prev, [catKey]: !catCollapsed }))}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                className={toggleButtonClass}
+                aria-expanded={!catCollapsed}
               >
-                {catCollapsed ? `Show ${catRows.length} team(s)` : 'Collapse category'}
+                <Chevron expanded={!catCollapsed} />
+                {catCollapsed ? `Show ${catRows.length} teams` : 'Hide teams'}
               </button>
             )}
           </div>
         </div>
+        <div className={`mt-2 h-0.5 w-full rounded-full ${tone.rule} opacity-60`} />
       </div>
     )
   }
@@ -340,7 +456,11 @@ export default function JudgeDashboard() {
   const teams = {}
   submissions.forEach(sub => {
     if (!teams[sub.team_id]) {
-      teams[sub.team_id] = { name: sub.team_name, submissions: [] }
+      teams[sub.team_id] = {
+        name: sub.team_name,
+        productName: sub.product_name,
+        submissions: [],
+      }
     }
     teams[sub.team_id].submissions.push(sub)
   })
@@ -348,31 +468,49 @@ export default function JudgeDashboard() {
   const filteredTeams = searchTeam
     ? teamList.filter(([teamId, team]) =>
         String(teamId) === String(searchTeam) ||
-        team.name.toLowerCase().includes(searchTeam.toLowerCase())
+        team.name.toLowerCase().includes(searchTeam.toLowerCase()) ||
+        (team.productName || '').toLowerCase().includes(searchTeam.toLowerCase())
       )
     : teamList
 
   // Files tab grouping: competition category (AI for Engineering / Social / Entrepreneurship)
   const teamCategoryMap = {}
-  submittedTeams.forEach(t => { teamCategoryMap[t.team_id] = t.competition_category })
+  const productByTeam = {}
+  submittedTeams.forEach(t => {
+    teamCategoryMap[t.team_id] = t.competition_category
+    productByTeam[t.team_id] = t.product_name
+  })
   const categoryOfTeam = (teamId) => teamCategoryMap[teamId] || 'Uncategorized'
+
+  // The Files tab lists only teams that actually uploaded something. Teams with
+  // an empty submission record are reached from the Score Teams tab instead, so
+  // every count on this tab matches what the judge can open.
+  const teamsWithFiles = filteredTeams.filter(([, team]) =>
+    team.submissions.some(sub => (sub.files?.length || 0) > 0)
+  )
+
   const fileGroups = []
-  filteredTeams.forEach(([teamId, team]) => {
+  teamsWithFiles.forEach(([teamId, team]) => {
     const cat = categoryOfTeam(teamId)
     let group = fileGroups.find(g => g.name === cat)
     if (!group) {
       group = { name: cat, rows: [], files: 0 }
       fileGroups.push(group)
     }
-    const teamFileCount = team.submissions.reduce((n, s) => n + (s.files?.length || 0), 0)
     group.rows.push([teamId, team])
-    group.files += teamFileCount
+    group.files += team.submissions.reduce((n, s) => n + (s.files?.length || 0), 0)
   })
   const fileGroupTones = {}
-  fileGroups.forEach((g, i) => { fileGroupTones[g.name] = criterionTones[i % criterionTones.length] })
+  fileGroups.forEach((g, i) => { fileGroupTones[g.name] = TONE_PALETTE[i % TONE_PALETTE.length] })
   const visibleFileGroups = fileCategory === 'all'
     ? fileGroups
     : fileGroups.filter(g => g.name === fileCategory)
+
+  const fileTeamCount = teamsWithFiles.length
+  const fileCountTotal = teamsWithFiles.reduce(
+    (n, [, team]) => n + team.submissions.reduce((m, sub) => m + (sub.files?.length || 0), 0),
+    0
+  )
 
   const deliverableStats = [...new Set(submissions.map(s => s.deliverable_category).filter(Boolean))]
     .sort((a, b) => String(a).localeCompare(String(b)))
@@ -433,20 +571,29 @@ export default function JudgeDashboard() {
   }
   const categoryStats = categoriesInView.map(cat => {
     const rows = allRows.filter(t => categoryOf(t) === cat)
+    // "Submitted" means the team actually uploaded a file. Everything the judge
+    // is told, and every progress fraction, is measured against that subset so
+    // the numbers never fall back to the raw team count.
+    const submittedRows = rows.filter(t => t.has_files)
     return {
       name: cat,
       teams: rows.length,
-      scored: rows.filter(t => t.isComplete).length,
-      withFiles: rows.filter(t => t.has_files).length,
-      files: rows.reduce((n, t) => n + (t.file_count || 0), 0),
+      withFiles: submittedRows.length,
+      scored: submittedRows.filter(t => t.isComplete).length,
+      files: submittedRows.reduce((n, t) => n + (t.file_count || 0), 0),
     }
   })
   const categoryTones = {}
-  categoriesInView.forEach((cat, i) => { categoryTones[cat] = criterionTones[i % criterionTones.length] })
+  categoriesInView.forEach((cat, i) => { categoryTones[cat] = TONE_PALETTE[i % TONE_PALETTE.length] })
 
-  // Always render every competition category, even when it has no team with files,
-  // so the judge can see the full picture instead of missing sections.
-  const scoreSections = categoriesInView.map(name => ({
+  // With no category filter every competition category is rendered, even the ones
+  // with nothing submitted, so the judge sees the full picture. Once a category is
+  // chosen, the others are dropped entirely rather than left as empty sections.
+  const scoreCategoryNames = scoreCategory === 'all'
+    ? categoriesInView
+    : categoriesInView.filter(cat => cat === scoreCategory)
+
+  const scoreSections = scoreCategoryNames.map(name => ({
     name,
     rows: visibleScoreRows.filter(t => categoryOf(t) === name),
   })).sort((a, b) => {
@@ -472,39 +619,52 @@ export default function JudgeDashboard() {
   })
   const hasActiveFilter = Boolean(searchTeam) || scoreFilter !== 'all' || scoreCategory !== 'all'
 
-  const myAssignedCount = baseRows.filter(t => t.isAssigned).length
-  const myCompletedCount = baseRows.filter(t => t.isAssigned && t.isComplete).length
-  const myScoredPoints = baseRows.reduce((sum, t) => sum + t.myTotal, 0)
-  const nextUnscored = sortedRows.find(t => t.isAssigned && !t.isComplete)
-  const currentIndex = nextUnscored ? visibleScoreRows.findIndex(t => t.team_id === nextUnscored.team_id) : -1
-  const prevTeam = currentIndex > 0 ? visibleScoreRows[currentIndex - 1] : null
-  const nextTeam = currentIndex >= 0 && currentIndex < visibleScoreRows.length - 1 ? visibleScoreRows[currentIndex + 1] : null
+  // Visual order of every editable score box: team by team, criterion by criterion.
+  // Tab / Shift+Tab walk this list so the judge can type a whole run of scores
+  // without ever leaving the keyboard.
+  const scoreOrder = []
+  for (const t of scoreRenderList) {
+    if (t.__emptyCategory || !t.isAssigned) continue
+    for (const c of criteria) scoreOrder.push(`${t.team_id}-${c.id}`)
+  }
 
-  const categories = [...new Set(submissions.map(sub => sub.deliverable_category).filter(Boolean))]
-    .sort((a, b) => String(a).localeCompare(String(b)))
+  // Counted from every submitted team, not from the current sort/filter view, so
+  // the numbers stay put when the judge changes the sort. "Submitted" means the
+  // team actually uploaded a file and is assigned to this judge.
+  const reviewRows = allRows.filter(t => t.isAssigned && t.has_files)
+  const reviewTotal = reviewRows.length
+  const reviewDone = reviewRows.filter(t => t.isComplete).length
+  const reviewLeft = reviewTotal - reviewDone
+  const reviewFiles = reviewRows.reduce((sum, t) => sum + (t.file_count || 0), 0)
+
   const visibleSubmissions = (team) => categoryFilter === 'all'
     ? team.submissions
     : team.submissions.filter(sub => sub.deliverable_category === categoryFilter)
 
   const summaryCards = [
-    { label: 'Teams with files', value: realSubmitters.length, tone: 'indigo' },
-    { label: 'Your teams', value: myAssignedCount, tone: 'sky' },
-    { label: 'Still to score', value: myAssignedCount - myCompletedCount, tone: 'emerald' },
-    { label: 'Points you gave', value: myScoredPoints, tone: 'amber' },
+    { label: 'Teams to review', value: reviewTotal, tone: 'indigo' },
+    { label: 'Scored', value: reviewDone, tone: 'sky' },
+    { label: 'Left to score', value: reviewLeft, tone: 'emerald' },
+    { label: 'Files waiting', value: reviewFiles, tone: 'amber' },
   ]
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-indigo-600">Judge workspace</p>
-          <h1 className="mt-2 text-3xl font-bold text-slate-900">Judge Dashboard</h1>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-slate-900">Judge Dashboard</h1>
+          <Link
+            to={isAll ? '/judge-dashboard?comp=1' : '/judge-dashboard?comp=all'}
+            className="text-sm font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            {isAll ? 'Competition 1' : 'All competitions'}
+          </Link>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setActiveTab('files')}
-            className={`flex-1 rounded-xl px-4 py-3 text-center text-base font-semibold transition sm:flex-none ${activeTab === 'files'
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'files'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
               : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
           >
@@ -512,7 +672,7 @@ export default function JudgeDashboard() {
           </button>
           <button
             onClick={() => setActiveTab('scores')}
-            className={`flex-1 rounded-xl px-4 py-3 text-center text-base font-semibold transition sm:flex-none ${activeTab === 'scores'
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'scores'
               ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
               : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
           >
@@ -520,7 +680,7 @@ export default function JudgeDashboard() {
           </button>
           <button
             onClick={() => navigate('/')}
-            className="rounded-xl bg-slate-200 px-4 py-3 text-base font-semibold text-slate-700 hover:bg-slate-300"
+            className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
           >
             Back
           </button>
@@ -553,141 +713,127 @@ export default function JudgeDashboard() {
         ))}
       </div>
 
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-500">Current view</p>
-            <p className="text-lg font-semibold text-slate-800">
-              {isAll ? 'All assigned competitions' : `Competition ${compId}`}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 text-sm">
-            {isAll ? (
-              <Link to="/judge-dashboard?comp=1" className="font-medium text-indigo-600 hover:text-indigo-700">View Competition 1</Link>
-            ) : (
-              <Link to="/judge-dashboard?comp=all" className="font-medium text-indigo-600 hover:text-indigo-700">View all teams</Link>
-            )}
-            <span className="text-slate-300">|</span>
-            <span className="text-slate-600">{realSubmitters.length} team(s) uploaded files</span>
-          </div>
-        </div>
-      </div>
-
       {activeTab === 'files' && (
         <div className="space-y-5">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">File filters</p>
-                <h2 className="text-xl font-bold text-slate-900">Browse submissions by category</h2>
-                <p className="mt-1 text-base text-slate-600">
-                  Teams are grouped by category. Use the filters below to focus on one category or one deliverable type.
-                </p>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <label htmlFor="file-comp-category" className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-                  Competition category
-                  <select
-                    id="file-comp-category"
-                    value={fileCategory}
-                    onChange={e => setFileCategory(e.target.value)}
-                    className="min-w-64 rounded-lg border border-slate-300 bg-white px-3 py-2 text-base font-normal focus:border-indigo-400 focus:outline-none"
-                  >
-                    <option value="all">All categories</option>
-                    {fileGroups.map(g => (
-                      <option key={g.name} value={g.name}>{g.name} ({g.rows.length} team(s), {g.files} file(s))</option>
-                    ))}
-                  </select>
-                </label>
-                <label htmlFor="file-category" className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-                  Deliverable category
-                  <select
-                    id="file-category"
-                    value={categoryFilter}
-                    onChange={e => setCategoryFilter(e.target.value)}
-                    className="min-w-64 rounded-lg border border-slate-300 bg-white px-3 py-2 text-base font-normal focus:border-indigo-400 focus:outline-none"
-                  >
-                    <option value="all">All deliverable types</option>
-                    {deliverableStats.map(d => (
-                      <option key={d.name} value={d.name}>{d.name} ({d.files} file(s))</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-              {fileGroups.map((g, i) => {
-                const tone = fileGroupTones[g.name] || criterionTones[0]
-                const active = fileCategory === g.name
-                return (
-                  <button
-                    key={g.name}
-                    onClick={() => setFileCategory(active ? 'all' : g.name)}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold transition ${active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
-                  >
-                    <span className={`h-2.5 w-2.5 rounded-full ${active ? 'bg-white' : tone.dot}`} />
-                    {g.name}
-                    <span className={active ? 'text-indigo-100' : 'text-slate-500'}>({g.rows.length})</span>
-                  </button>
-                )
-              })}
-              {fileCategory !== 'all' && (
-                <button onClick={() => setFileCategory('all')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">
-                  Clear filter
+          <div className="sticky top-2 z-20 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2.5 shadow-sm backdrop-blur">
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="file-search" className="sr-only">Search team</label>
+              <input
+                id="file-search"
+                type="search"
+                placeholder="Search team"
+                value={searchTeam}
+                onChange={e => setSearchTeam(e.target.value)}
+                className="w-36 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              />
+
+              <label htmlFor="file-comp-category" className="sr-only">Competition category</label>
+              <select
+                id="file-comp-category"
+                value={fileCategory}
+                onChange={e => setFileCategory(e.target.value)}
+                className="max-w-52 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              >
+                <option value="all">All categories</option>
+                {categoryStats.map(c => (
+                  <option key={c.name} value={c.name}>{c.name} ({c.withFiles} submitted)</option>
+                ))}
+              </select>
+
+              <label htmlFor="file-category" className="sr-only">Deliverable category</label>
+              <select
+                id="file-category"
+                value={categoryFilter}
+                onChange={e => setCategoryFilter(e.target.value)}
+                className="max-w-52 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              >
+                <option value="all">All deliverable types</option>
+                {deliverableStats.map(d => (
+                  <option key={d.name} value={d.name}>{d.name} ({d.files})</option>
+                ))}
+              </select>
+
+              {(fileCategory !== 'all' || categoryFilter !== 'all' || searchTeam) && (
+                <button
+                  onClick={() => { setFileCategory('all'); setCategoryFilter('all'); setSearchTeam('') }}
+                  className="rounded-lg px-2.5 py-1.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50"
+                >
+                  Reset
                 </button>
               )}
-              <span className="ml-auto text-sm text-slate-500">
-                {teamList.length} team(s) · {submissions.reduce((n, s) => n + (s.files?.length || 0), 0)} file(s) total
+
+              <span className="ml-auto text-sm font-medium tabular-nums text-slate-600">
+                {fileTeamCount} team{fileTeamCount === 1 ? '' : 's'} · {fileCountTotal} file{fileCountTotal === 1 ? '' : 's'}
               </span>
             </div>
           </div>
-          {teamList.length === 0 ? (
+          {teamsWithFiles.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-amber-300 bg-amber-50 p-8 text-center">
               <p className="text-lg font-semibold text-amber-900">No files to show yet</p>
               <p className="mt-1 text-base text-amber-800">
                 {assignments.length === 0
                   ? 'You have not been assigned any team yet, so there are no files to open. Ask an admin to assign you teams in Admin -> Judge Management, and they will appear here.'
-                  : 'None of your assigned teams has uploaded a file yet.'}
+                  : searchTeam
+                    ? `No assigned team matching "${searchTeam}" has uploaded a file.`
+                    : 'No assigned team has uploaded a file yet. Teams that have not submitted are listed on the Score Teams tab.'}
+              </p>
+            </div>
+          ) : visibleFileGroups.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+              <p className="text-base font-semibold text-slate-700">No submitted team in this category</p>
+              <p className="mt-1 text-sm text-slate-500">
+                Pick another category, or use the Score Teams tab to see every team that has not uploaded a file yet.
               </p>
             </div>
           ) : (
             visibleFileGroups.map(group => {
-              const tone = fileGroupTones[group.name] || criterionTones[0]
+              const tone = fileGroupTones[group.name] || TONE_PALETTE[0]
               const groupKey = `files:${group.name}`
               const groupCollapsed = Boolean(collapsed[groupKey])
               return (
                 <Fragment key={group.name}>
-                  <div className={`rounded-2xl border border-l-4 border-slate-200 bg-white px-5 py-4 shadow-sm ${tone.left}`}>
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`h-3 w-3 shrink-0 rounded-full ${tone.dot}`} />
-                          <p className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">Category</p>
-                        </div>
-                        <h2 className="truncate text-xl font-bold text-slate-900">{group.name}</h2>
-                        <p className="mt-1 text-base text-slate-600">
-                          {group.rows.length} team(s) assigned to you · {group.files} file(s) available
-                        </p>
-                      </div>
+                  <div className="px-1 pt-1">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tone.dot}`} />
+                      <h2 className={`truncate text-sm font-bold uppercase tracking-wider ${tone.name}`}>{group.name}</h2>
+                      <span className={`text-sm font-medium tabular-nums ${tone.count}`}>
+                        {group.rows.length} team{group.rows.length === 1 ? '' : 's'} · {group.files} file{group.files === 1 ? '' : 's'}
+                      </span>
                       <button
                         onClick={() => setCollapsed(prev => ({ ...prev, [groupKey]: !groupCollapsed }))}
-                        className="self-start rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 md:self-auto"
+                        className={`${toggleButtonClass} ml-auto`}
+                        aria-expanded={!groupCollapsed}
                       >
-                        {groupCollapsed ? `Show ${group.rows.length} team(s)` : 'Collapse'}
+                        <Chevron expanded={!groupCollapsed} />
+                        {groupCollapsed ? `Show ${group.rows.length} teams` : 'Hide teams'}
                       </button>
                     </div>
+                    <div className={`mt-2 h-0.5 w-full rounded-full ${tone.rule} opacity-60`} />
                   </div>
                   {!groupCollapsed && group.rows.map(([teamId, team]) => (
               <div key={teamId} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Team</p>
-                    <h2 className="text-xl font-bold text-slate-900">
-                      {isAll && team.submissions[0]?.competition_name ? `${team.submissions[0].competition_name} · ` : ''}
-                      {team.name}
-                    </h2>
-                    <p className="mt-1 text-base text-slate-600">
-                      Team ID: {teamId} · {filesForTeam(teamId)} file(s) available to you
+                    <p className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-sm font-medium text-slate-500">Team Name:</span>
+                      <span className="text-xl font-bold text-slate-900" title={team.name}>
+                        {isAll && team.submissions[0]?.competition_name ? `${team.submissions[0].competition_name} · ` : ''}
+                        {team.name}
+                      </span>
+                    </p>
+                    {(team.productName || productByTeam[teamId]) && (
+                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-sm font-medium text-slate-500">Project Name:</span>
+                        <span
+                          className="text-base font-semibold text-indigo-600"
+                          title={team.productName || productByTeam[teamId]}
+                        >
+                          {team.productName || productByTeam[teamId]}
+                        </span>
+                      </p>
+                    )}
+                    <p className="mt-1 text-sm text-slate-500">
+                      #{teamId} · {filesForTeam(teamId)} file(s) available to you
                     </p>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-slate-500">
@@ -783,152 +929,107 @@ export default function JudgeDashboard() {
       )}
 
       {activeTab === 'scores' && (
-        <div className="space-y-5">
-          {showGuide && (
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-bold text-indigo-900">How to score a team</h2>
-                  <ol className="mt-2 list-decimal space-y-1 pl-5 text-base text-indigo-900">
-                    <li>Open the <strong>Score Teams</strong> tab. Teams are grouped by category.</li>
-                    <li>Open a team and type a whole number in each box. Each box accepts only the range shown next to it.</li>
-                    <li>Your score saves by itself when you click away. You will see <span className="font-semibold">Score saved</span>.</li>
-                    <li>Press <kbd className="rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-sm">Enter</kbd> to save and jump to the next box, or <kbd className="rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-sm">Shift + Enter</kbd> to go back.</li>
-                    <li>Not sure? Use the <strong>Low / Good / Top</strong> buttons for a quick suggestion.</li>
-                    <li>Finished a team? Use <strong>Score next team</strong> at the top to jump straight to the next one.</li>
-                  </ol>
-                </div>
-                <button
-                  onClick={() => setShowGuide(false)}
-                  className="shrink-0 rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
-                >
-                  Hide
-                </button>
-              </div>
-            </div>
-          )}
-          <div className="sticky top-2 z-20 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">Team scoring</p>
-                <h2 className="text-lg font-bold text-slate-900">Evaluate submitted teams</h2>
-                <p className="mt-1 text-base text-slate-600">
-                  Total possible: {maxScore} points across {criteria.length} criteria. Scores save automatically when you leave a box.
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {criteria.map((c, i) => (
-                    <span
-                      key={c.id}
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${criterionTones[i % criterionTones.length].chip}`}
-                    >
-                      <span className={`h-2 w-2 rounded-full ${criterionTones[i % criterionTones.length].dot}`} />
-                      {c.name} (max {c.weight})
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {scoreFilters.map(f => (
-                    <button
-                      key={f.key}
-                      onClick={() => setScoreFilter(f.key)}
-                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${scoreFilter === f.key
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <label htmlFor="team-search" className="sr-only">Search team</label>
-                  <input
-                    id="team-search"
-                    type="search"
-                    placeholder="Search team ID or name"
-                    value={searchTeam}
-                    onChange={e => setSearchTeam(e.target.value)}
-                    className="w-52 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+        <div className="space-y-4">
+          <div className="sticky top-2 z-20 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2.5 shadow-sm backdrop-blur">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-2 rounded-full bg-indigo-600 transition-all"
+                    style={{ width: `${reviewTotal ? Math.round((reviewDone / reviewTotal) * 100) : 0}%` }}
                   />
-                  {searchTeam && (
-                    <button onClick={() => setSearchTeam('')} className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-                      Clear
-                    </button>
-                  )}
-                  <label htmlFor="sort-teams" className="sr-only">Sort teams</label>
-                  <select
-                    id="sort-teams"
-                    value={sortBy}
-                    onChange={e => setSortBy(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
-                  >
-                    {sortOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-                  </select>
-                  <label htmlFor="filter-category" className="sr-only">Filter by category</label>
-                  <select
-                    id="filter-category"
-                    value={scoreCategory}
-                    onChange={e => setScoreCategory(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
-                  >
-                    <option value="all">All categories</option>
-                    {categoryStats.map(c => (
-                      <option key={c.name} value={c.name}>{c.name} ({c.teams})</option>
-                    ))}
-                  </select>
                 </div>
+                <span className="text-sm font-semibold tabular-nums text-slate-700">{reviewDone}/{reviewTotal}</span>
               </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-              {nextUnscored && (
-                <>
-                  <button
-                    onClick={() => focusTeam(nextUnscored.team_id)}
-                    className="rounded-lg bg-indigo-600 px-4 py-2 text-base font-semibold text-white hover:bg-indigo-700"
-                  >
-                    Score next team: {nextUnscored.team_name}
-                  </button>
-                  {prevTeam && (
-                    <button
-                      onClick={() => focusTeam(prevTeam.team_id)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                    >
-                      &larr; Previous team
-                    </button>
-                  )}
-                  {nextTeam && (
-                    <button
-                      onClick={() => focusTeam(nextTeam.team_id)}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                    >
-                      Next team &rarr;
-                    </button>
-                  )}
-                </>
-              )}
-              {!showGuide && (
-                <button
-                  onClick={() => setShowGuide(true)}
-                  className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
-                >
-                  How to score
-                </button>
-              )}
+
+              <label htmlFor="score-filter" className="sr-only">Filter teams</label>
+              <select
+                id="score-filter"
+                value={scoreFilter}
+                onChange={e => setScoreFilter(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              >
+                {scoreFilters.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+              </select>
+
+              <label htmlFor="team-search" className="sr-only">Search team</label>
+              <input
+                id="team-search"
+                type="search"
+                placeholder="Search team"
+                value={searchTeam}
+                onChange={e => setSearchTeam(e.target.value)}
+                className="w-36 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              />
+
+              <label htmlFor="filter-category" className="sr-only">Filter by category</label>
+              <select
+                id="filter-category"
+                value={scoreCategory}
+                onChange={e => setScoreCategory(e.target.value)}
+                className="max-w-44 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              >
+                <option value="all">All categories</option>
+                {categoryStats.map(c => (
+                  <option key={c.name} value={c.name}>{c.name} ({c.withFiles} submitted)</option>
+                ))}
+              </select>
+
+              <label htmlFor="sort-teams" className="sr-only">Sort teams</label>
+              <select
+                id="sort-teams"
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
+              >
+                {sortOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+
               {pendingRows.length > 0 && (
                 <button
                   onClick={() => setShowEmptySubmissions(v => !v)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${showEmptySubmissions ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                  className={`rounded-lg px-2.5 py-1.5 text-sm font-medium transition ${showEmptySubmissions ? 'bg-slate-700 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
                 >
-                  {showEmptySubmissions ? 'Hide' : 'Show'} {pendingRows.length} team(s) with no files yet
+                  No files ({pendingRows.length})
                 </button>
               )}
-              <span className="ml-auto text-sm text-slate-500">
-                {visibleScoreRows.length} of {baseRows.length} team(s) shown
-                {sortingAllTeams && !showEmptySubmissions ? ' (sorting includes teams with no files yet)' : ''}
+
+              {hasActiveFilter && (
+                <button
+                  onClick={() => { setSearchTeam(''); setScoreFilter('all'); setScoreCategory('all') }}
+                  className="rounded-lg px-2.5 py-1.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50"
+                >
+                  Reset
+                </button>
+              )}
+
+              <span className="ml-auto hidden text-xs text-slate-400 sm:inline">
+                Enter next &middot; &larr;&rarr; criteria &middot; &uarr;&darr; team
               </span>
+              <button
+                onClick={() => setShowGuide(v => !v)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100"
+                aria-expanded={showGuide}
+              >
+                <Chevron expanded={showGuide} />
+                {showGuide ? 'Hide help' : 'How to score'}
+              </button>
             </div>
           </div>
+
+          {showGuide && (
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+              <ol className="list-decimal space-y-1 pl-5">
+                <li>Type a whole number in each box. Letters, spaces and stray characters are cleaned up for you.</li>
+                <li><kbd className="rounded border border-indigo-300 bg-white px-1">Enter</kbd> saves the box and puts the cursor in the next one &mdash; Innovation to Feasibility, and the last criterion to the first box of the next team.</li>
+                <li><kbd className="rounded border border-indigo-300 bg-white px-1">Shift+Enter</kbd> goes back one box, and <kbd className="rounded border border-indigo-300 bg-white px-1">Tab</kbd> / <kbd className="rounded border border-indigo-300 bg-white px-1">Shift+Tab</kbd> do the same.</li>
+                <li><kbd className="rounded border border-indigo-300 bg-white px-1">&larr;</kbd> and <kbd className="rounded border border-indigo-300 bg-white px-1">&rarr;</kbd> move between the criteria of the same team.</li>
+                <li><kbd className="rounded border border-indigo-300 bg-white px-1">&uarr;</kbd> and <kbd className="rounded border border-indigo-300 bg-white px-1">&darr;</kbd> jump to the same criterion on the team above or below.</li>
+                <li><kbd className="rounded border border-indigo-300 bg-white px-1">Ctrl+&uarr;</kbd> / <kbd className="rounded border border-indigo-300 bg-white px-1">Ctrl+&darr;</kbd> raise or lower the score in place, add <kbd className="rounded border border-indigo-300 bg-white px-1">Shift</kbd> for steps of 5.</li>
+                <li>Out of range, the box returns to its last saved score and the range is shown under it.</li>
+              </ol>
+            </div>
+          )}
 
           {baseRows.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-amber-300 bg-amber-50 p-8 text-center">
@@ -943,7 +1044,16 @@ export default function JudgeDashboard() {
             </div>
           ) : hasActiveFilter && visibleScoreRows.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
-              No team matches the current search or filter.
+              <p className="text-base font-semibold text-slate-700">
+                {scoreCategory !== 'all'
+                  ? `No submitted team in ${scoreCategory}`
+                  : 'No team matches the current search or filter.'}
+              </p>
+              <p className="mt-1 text-sm">
+                {scoreCategory !== 'all'
+                  ? 'Pick another category, or choose "All categories" to see every team.'
+                  : 'Clear the search box or pick "All" to widen the view.'}
+              </p>
             </div>
           ) : (
             scoreRenderList.map((t, rowIndex) => {
@@ -955,25 +1065,25 @@ export default function JudgeDashboard() {
                 : rowIndex === 0 || categoryOf(scoreRenderList[rowIndex - 1] || {}) !== cat
               const catRows = t.__emptyCategory ? [] : visibleScoreRows.filter(x => categoryOf(x) === cat)
               const catStat = categoryStats.find(c => c.name === cat)
-              const tone = categoryTones[cat] || criterionTones[0]
+              const tone = categoryTones[cat] || TONE_PALETTE[0]
 
               if (t.__emptyCategory) {
                 return (
                   <Fragment key={`empty-${cat}`}>
                     {renderCategoryHeader(cat, [], catStat, tone)}
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center">
-                      <p className="text-base font-semibold text-slate-700">No team to show in this category</p>
+                      <p className="text-base font-semibold text-slate-700">No submitted team in this category</p>
                       <p className="mt-1 text-sm text-slate-500">
-                        {catStat && catStat.teams > 0
-                          ? `${catStat.teams} team(s) submitted in this category but none has uploaded a file yet.`
-                          : 'No team has submitted in this category yet.'}
+                        {catStat && catStat.teams > catStat.withFiles
+                          ? `${catStat.teams - catStat.withFiles} team(s) here have not uploaded a file yet.`
+                          : 'No team has uploaded a file in this category yet.'}
                       </p>
                       {catStat && catStat.teams > 0 && (
                         <button
                           onClick={() => setShowEmptySubmissions(true)}
-                          className="mt-3 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700"
+                          className="mt-3 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
                         >
-                          Show the {catStat.teams} team(s) with no files yet
+                          Show {catStat.teams} team(s) without files
                         </button>
                       )}
                     </div>
@@ -985,107 +1095,137 @@ export default function JudgeDashboard() {
               const avgScore = isAll ? null : getScoreForTeam(t.team_id)
               const pct = criteria.length > 0 ? Math.round((t.scoredCount / criteria.length) * 100) : 0
               const isCollapsed = Boolean(collapsed[t.team_id])
+              const fileCount = t.teamSubs.reduce((n, s) => n + (s.files?.length || 0), 0)
+              const filesOpen = Boolean(showFiles[t.team_id])
               return (
                 <Fragment key={`${t.competition_id}-${t.team_id}`}>
                 {showCatHeader && renderCategoryHeader(cat, catRows, catStat, tone)}
                 {!catCollapsed && (
                 <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex flex-col gap-3 p-5 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Team</p>
+                  <div className="flex flex-wrap items-center gap-3 px-5 pb-3 pt-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-sm font-medium text-slate-500">Team Name:</span>
+                        <span className="truncate text-lg font-bold text-slate-900" title={t.team_name}>
+                          {t.team_name || `Team ${t.team_id}`}
+                        </span>
                         {t.isComplete && (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Scoring complete</span>
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Done</span>
                         )}
-                      </div>
-                      <h2 className="truncate text-2xl font-bold text-slate-900">
-                        {isAll && t.competition_name ? `${t.competition_name} · ` : ''}
-                        {t.team_name || `Team ${t.team_id}`}
-                      </h2>
-                      <p className="mt-1 text-base text-slate-600">
-                        Team ID: {t.team_id} · {t.file_count} file(s) in {t.deliverables_with_files} of {t.deliverables_total} deliverable(s)
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
                         {!t.has_files && (
-                          <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">No files uploaded yet</span>
+                          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">No files</span>
                         )}
-                        {t.isAssigned ? (
-                          <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Assigned to you</span>
-                        ) : (
-                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">Not assigned to you</span>
-                        )}
-                        {(t.statuses || []).map(s => (
-                          <span key={s} className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[s] || 'bg-slate-100 text-slate-700'}`}>{s}</span>
-                        ))}
-                        {(t.categories || []).map(c => (
-                          <span key={c} className="inline-flex rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700" title="Deliverable category">{c}</span>
-                        ))}
+                      </p>
+                      {t.product_name && (
+                        <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
+                          <span className="text-sm font-medium text-slate-500">Project Name:</span>
+                          <span className="truncate text-sm font-semibold text-indigo-600" title={t.product_name}>
+                            {t.product_name}
+                          </span>
+                        </p>
+                      )}
+                      <p className="mt-0.5 text-sm text-slate-500">
+                        #{t.team_id}
+                        {isAll && t.competition_name ? ` · ${t.competition_name}` : ''}
+                        {' · '}{t.scoredCount}/{criteria.length} scored
+                        {avgScore ? ` · ${avgScore.num_judges} judge(s)` : ''}
+                      </p>
+                      <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-slate-200">
+                        <div className="h-1.5 rounded-full bg-indigo-600 transition-all" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
-                    <div className="flex shrink-0 flex-col gap-2">
-                      <div className="rounded-xl bg-indigo-50 px-4 py-3 text-lg font-bold text-indigo-700">
-                        Your total: {t.myTotal}/{maxScore}
-                      </div>
-                      {avgScore && (
-                        <div
-                          className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-medium text-slate-600"
-                          title="Judges who scored this team"
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="rounded-xl bg-indigo-50 px-3 py-1.5 text-base font-bold tabular-nums text-indigo-700">
+                        {t.myTotal}<span className="text-sm font-semibold text-indigo-400">/{maxScore}</span>
+                      </span>
+                      {t.isAssigned && t.teamSubs.length > 0 && (
+                        <button
+                          onClick={() => setShowFiles(prev => ({ ...prev, [t.team_id]: !prev[t.team_id] }))}
+                          className={toggleButtonClass}
+                          aria-expanded={Boolean(showFiles[t.team_id])}
                         >
-                          {avgScore.num_judges} judge(s) scored this team
-                        </div>
+                          <Chevron expanded={Boolean(showFiles[t.team_id])} />
+                          View files ({fileCount})
+                        </button>
                       )}
                       <button
                         onClick={() => setCollapsed(prev => ({ ...prev, [t.team_id]: !isCollapsed }))}
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                        className={toggleButtonClass}
+                        aria-expanded={!isCollapsed}
                       >
-                        {isCollapsed ? 'Expand scoring' : 'Collapse'}
+                        <Chevron expanded={!isCollapsed} />
+                        {isCollapsed ? 'Show score boxes' : 'Hide score boxes'}
                       </button>
                     </div>
                   </div>
 
                   <div className="px-5 pb-5">
-                    <div className="mb-1 flex items-center justify-between text-sm font-medium text-slate-600">
-                      <span>{t.scoredCount} of {criteria.length} criteria scored</span>
-                      <span>{pct}%</span>
-                    </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                      <div className="h-2 rounded-full bg-indigo-600 transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-
                     {!t.isAssigned && (
-                      <p className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-base text-slate-600">
-                        This team is not assigned to you, so scoring is disabled. Ask an admin to assign it to you if you should review it.
+                      <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        Not assigned to you, so scoring is disabled. Ask an admin to assign this team if you should review it.
                       </p>
+                    )}
+
+                    {filesOpen && (
+                      <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        {t.teamSubs.filter(sub => (sub.files?.length || 0) > 0).map(sub => (
+                          <div key={sub.submission_id} className="mb-2 last:mb-0">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              {sub.deliverable_name}
+                            </p>
+                            {sub.files.map(f => (
+                              <div key={f.id} className="flex items-center gap-2 border-b border-slate-200/70 py-1.5 last:border-0">
+                                <span aria-hidden="true" className="text-base">{getFileIcon(f.original_filename)}</span>
+                                <span className="min-w-0 flex-1 truncate text-sm text-slate-700" title={f.original_filename}>
+                                  {f.original_filename}
+                                </span>
+                                <span className="shrink-0 text-xs text-slate-400">{formatFileSize(f.file_size)}</span>
+                                <button
+                                  onClick={() => downloadFile(sub.submission_id, f.id, f.original_filename).catch(err => setError(err.message))}
+                                  className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                                >
+                                  Download
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                        {fileCount > 0 && (
+                          <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2">
+                            <span className="text-xs text-slate-500">
+                              {fileCount} file(s) · nothing is downloaded until you ask
+                            </span>
+                            <button
+                              onClick={() => downloadTeamArchive(t.team_id, null)}
+                              className="rounded-md border border-indigo-200 bg-white px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                            >
+                              Download all as ZIP
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     {!isCollapsed && (
                       <>
                         {evaluation && t.isAssigned && (
-                          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-sm text-slate-600">Your scoring record (ID {evaluation.id})</p>
+                          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
                             <button
                               type="button"
                               onClick={() => handleClearEvaluation(evaluation)}
-                              className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                               disabled={evaluation.status === 'LOCKED' || evaluation.status === 'FINALIZED'}
                               title={evaluation.status === 'LOCKED' || evaluation.status === 'FINALIZED'
                                 ? 'The head judge has locked this team, so scores cannot be cleared'
                                 : 'Delete every score you gave for this team'}
                             >
-                              Clear all my scores for this team
+                              Clear my scores
                             </button>
                           </div>
                         )}
 
-                        <div className="mt-4 overflow-x-auto pb-2">
-                          <div
-                            className="grid gap-4"
-                            style={{
-                              gridTemplateColumns: `repeat(${Math.min(criteria.length || 1, 4)}, minmax(230px, 1fr))`,
-                            }}
-                          >
-                          {criteria.map((c, cIndex) => {
-                            const tone = criterionTones[cIndex % criterionTones.length]
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          {criteria.map((c) => {
                             const existing = evaluation?.scores?.find(s => s.criterion === c.name || s.criterion_id === c.id)?.score
                             const localKey = `${t.team_id}-${c.id}`
                             const displayValue = localScores[localKey] !== undefined ? localScores[localKey] : (existing !== undefined ? existing : '')
@@ -1094,135 +1234,137 @@ export default function JudgeDashboard() {
                             return (
                               <div
                                 key={c.id}
-                                className={`rounded-2xl border border-l-4 bg-slate-50 p-4 transition ${fieldError ? 'border-red-300 border-l-red-400 ring-1 ring-red-200' : `border-slate-200 ${tone.left}`}`}
+                                className={`rounded-xl border bg-slate-50 p-3 transition ${fieldError ? 'border-red-300 ring-1 ring-red-200' : 'border-slate-200'}`}
                               >
-                                <div className="mb-3 flex items-center justify-between gap-2">
-                                  <span
-                                    className={`inline-flex min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 text-base font-bold ${tone.chip}`}
-                                    title={c.name}
-                                  >
-                                    <span className={`h-3 w-3 shrink-0 rounded-full ${tone.dot}`} />
-                                    <label htmlFor={`score-${localKey}`} className="truncate">{c.name}</label>
-                                  </span>
-                                  <span className="shrink-0 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-700">
-                                    1 to {c.weight}
-                                  </span>
-                                </div>
+                                <label
+                                  htmlFor={`score-${localKey}`}
+                                  className="mb-1.5 flex items-baseline gap-1 text-sm font-semibold text-slate-700"
+                                >
+                                  <span className="truncate">{c.name}</span>
+                                  <span className="shrink-0 text-xs font-medium text-slate-400">/ {c.weight}</span>
+                                </label>
                                 <input
                                   id={`score-${localKey}`}
                                   ref={el => { scoreInputs.current[localKey] = el }}
-                                  type="number"
+                                  type="text"
                                   inputMode="numeric"
-                                  min="1"
-                                  max={c.weight}
-                                  step="1"
+                                  autoComplete="off"
+                                  data-score-key={localKey}
                                   disabled={!t.isAssigned}
-                                  placeholder={`Type 1-${c.weight}`}
+                                  placeholder="–"
                                   value={displayValue}
                                   onChange={e => {
-                                    const raw = e.target.value.trim()
-                                    if (raw === '') {
-                                      setLocalScores(prev => ({ ...prev, [localKey]: '' }))
-                                      setScoreErrors(prev => { const next = { ...prev }; delete next[localKey]; return next })
-                                      return
+                                    // Keep whatever the judge typed minus any stray
+                                    // characters, instead of refusing the keystroke.
+                                    const digits = e.target.value.replace(/\D/g, '')
+                                    setLocalScores(prev => ({ ...prev, [localKey]: digits }))
+                                    const n = parseInt(digits, 10)
+                                    if (digits !== '' && (Number.isNaN(n) || n < 1 || n > c.weight)) {
+                                      setScoreErrors(prev => ({ ...prev, [localKey]: `Enter 1-${c.weight}` }))
+                                    } else {
+                                      clearFieldError(localKey)
                                     }
-                                    if (!/^\d+$/.test(raw)) {
-                                      setScoreErrors(prev => ({ ...prev, [localKey]: `Score must be a whole number from 1 to ${c.weight}` }))
-                                      return
-                                    }
-                                    const val = parseInt(raw, 10)
-                                    if (val < 1 || val > c.weight) {
-                                      setScoreErrors(prev => ({ ...prev, [localKey]: `Score must be a whole number from 1 to ${c.weight}` }))
-                                      return
-                                    }
-                                    setLocalScores(prev => ({ ...prev, [localKey]: val }))
-                                    setScoreErrors(prev => { const next = { ...prev }; delete next[localKey]; return next })
                                   }}
-                                  onBlur={() => applyScore(t.team_id, c, localKey)}
+                                  onFocus={e => {
+                                    if (e.target.value) e.target.select()
+                                  }}
+                                  onBlur={() => commitScore(t.team_id, c, localKey)}
                                   onKeyDown={e => {
-                                    if (e.key === 'Enter') {
+                                    if (e.key === 'Tab') {
+                                      // Walk only the score boxes so the judge never
+                                      // lands on a filter, a note field or a button.
+                                      // preventDefault() cancels the native focus move,
+                                      // so blur() is what commits the score.
                                       e.preventDefault()
-                                      applyScore(t.team_id, c, localKey)
-                                      moveFocus(t.team_id, c, e.shiftKey ? -1 : 1)
+                                      e.currentTarget.blur()
+                                      stepScore(localKey, e.shiftKey ? -1 : 1)
+                                      return
+                                    }
+                                    if (e.key === 'Enter') {
+                                      // Enter always leaves the box, even when it is
+                                      // empty or the value was not changed.
+                                      e.preventDefault()
+                                      e.currentTarget.blur()
+                                      stepScore(localKey, e.shiftKey ? -1 : 1)
+                                      return
+                                    }
+                                    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                                      // Left and right walk the criteria of this team.
+                                      // The values are one or two digits, so giving up
+                                      // caret movement costs the judge very little.
+                                      e.preventDefault()
+                                      e.currentTarget.blur()
+                                      stepScore(localKey, e.key === 'ArrowRight' ? 1 : -1)
+                                      return
+                                    }
+                                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                      e.preventDefault()
+                                      const dir = e.key === 'ArrowUp' ? 1 : -1
+                                      if (e.ctrlKey || e.metaKey || e.altKey) {
+                                        // Adjust this score instead of leaving the box.
+                                        const current = parseInt(String(localScores[localKey] ?? ''), 10)
+                                        const base = Number.isNaN(current)
+                                          ? (savedScoreFor(t.team_id, c) || 0)
+                                          : current
+                                        const next = Math.min(c.weight, Math.max(1, base + dir * (e.shiftKey ? 5 : 1)))
+                                        setLocalScores(prev => ({ ...prev, [localKey]: next }))
+                                        clearFieldError(localKey)
+                                        return
+                                      }
+                                      // Up and down move to the same criterion on the
+                                      // team above or below.
+                                      e.currentTarget.blur()
+                                      stepTeam(localKey, dir)
                                     }
                                   }}
+                                  title="Enter next · Shift+Enter back · ← → criteria · ↑ ↓ team · Ctrl+↑ ↓ adjust"
+                                  aria-label={`${t.team_name || `Team ${t.team_id}`} - ${c.name} out of ${c.weight}`}
                                   aria-invalid={fieldError ? true : undefined}
                                   aria-describedby={fieldError ? `err-${localKey}` : undefined}
-                                  className={`w-full rounded-xl border-2 bg-white px-4 py-4 text-center text-2xl font-bold focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 ${fieldError ? 'border-red-500 focus:border-red-500' : 'border-slate-400 focus:border-indigo-500'}`}
+                                  className={`w-full cursor-text rounded-lg border-2 bg-white px-3 py-2 text-center text-xl font-bold tabular-nums caret-indigo-600 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 ${fieldError ? 'border-red-400 focus:border-red-500' : 'border-slate-300 focus:border-indigo-500'}`}
                                 />
 
                                 {t.isAssigned && (
-                                  <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {quickScores.map(q => {
-                                      const qv = Math.max(1, Math.round(c.weight * q.pct))
-                                      return (
-                                        <button
-                                          key={q.label}
-                                          type="button"
-                                          onClick={() => {
-                                            setLocalScores(prev => ({ ...prev, [localKey]: qv }))
-                                            setScoreErrors(prev => { const next = { ...prev }; delete next[localKey]; return next })
-                                            applyScore(t.team_id, c, localKey)
-                                          }}
-                                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-600 hover:border-indigo-300 hover:text-indigo-700"
-                                          title={`Set ${qv} of ${c.weight}`}
-                                        >
-                                          {q.label} {qv}
-                                        </button>
-                                      )
-                                    })}
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowNotes(prev => ({ ...prev, [localKey]: !prev[localKey] }))}
-                                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-600 hover:border-indigo-300 hover:text-indigo-700"
-                                    >
-                                      {showNotes[localKey] ? 'Hide note' : 'Add note'}
-                                    </button>
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowNotes(prev => ({ ...prev, [localKey]: !prev[localKey] }))}
+                                    className="mt-1.5 text-xs font-medium text-slate-500 hover:text-indigo-700"
+                                  >
+                                    {showNotes[localKey] ? '− hide note' : '+ note'}
+                                  </button>
                                 )}
-
-                                <div className="mt-2 flex items-center justify-between text-sm text-slate-600">
-                                  <span>Lowest: 1</span>
-                                  <span>Highest: {c.weight}</span>
-                                </div>
 
                                 {showNotes[localKey] && (
                                   <input
                                     type="text"
-                                    placeholder="Optional note (saved with the score)"
+                                    placeholder="Optional note"
                                     value={notes[localKey] || ''}
                                     onChange={e => setNotes(prev => ({ ...prev, [localKey]: e.target.value }))}
                                     onBlur={() => applyScore(t.team_id, c, localKey)}
-                                    className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter' || e.key === 'Tab') {
+                                        e.preventDefault()
+                                        e.currentTarget.blur()
+                                        stepScore(localKey, e.key === 'Tab' && e.shiftKey ? -1 : 1)
+                                      }
+                                    }}
+                                    className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-indigo-400 focus:outline-none"
                                   />
                                 )}
 
-                                {fieldError ? (
-                                  <p id={`err-${localKey}`} className="mt-2 text-sm font-medium text-red-600">{fieldError}</p>
-                                ) : fieldStatus === 'saving' ? (
-                                  <p className="mt-2 text-sm font-medium text-slate-500">Saving...</p>
-                                ) : fieldStatus === 'saved' ? (
-                                  <p className="mt-2 text-sm font-medium text-emerald-600">Score saved</p>
-                                ) : null}
+                                <p className="mt-1.5 h-4 text-xs">
+                                  {fieldError ? (
+                                    <span id={`err-${localKey}`} className="font-medium text-red-600">{fieldError}</span>
+                                  ) : fieldStatus === 'saving' ? (
+                                    <span className="text-slate-400">saving...</span>
+                                  ) : fieldStatus === 'saved' ? (
+                                    <span className="font-semibold text-emerald-600">saved</span>
+                                  ) : null}
+                                </p>
                               </div>
                             )
                           })}
-                          </div>
                         </div>
-
-                        {t.isAssigned && t.teamSubs.length > 0 && (
-                          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
-                            <span className="text-xs text-slate-500">
-                              {t.teamSubs.reduce((n, s) => n + (s.files?.length || 0), 0)} file(s) available to you
-                            </span>
-                            <button
-                              onClick={() => downloadTeamArchive(t.team_id, null)}
-                              className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
-                            >
-                              Download team files
-                            </button>
-                          </div>
-                        )}
                       </>
                     )}
                   </div>
