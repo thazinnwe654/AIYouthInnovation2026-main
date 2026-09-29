@@ -16,7 +16,25 @@ import {
   getJudgeAllSubmissions,
   getSubmittedTeams,
 } from '../api/judges'
-import { getFileIcon, formatFileSize } from '../utils'
+import { getFileIcon, formatFileSize, safeExternalUrl } from '../utils'
+
+// Opens the team's demo video in a new tab. Renders nothing when the team has no
+// link, or when the stored value is not a safe http(s) address.
+function DemoLink({ url, className = '' }) {
+  const safe = safeExternalUrl(url)
+  if (!safe) return null
+  return (
+    <a
+      href={safe}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`inline-flex items-center gap-1 font-semibold text-rose-600 underline decoration-rose-300 hover:text-rose-700 hover:decoration-rose-500 ${className}`}
+      title={`Open the demo video (${safe})`}
+    >
+      <span aria-hidden="true">▶</span> Watch demo
+    </a>
+  )
+}
 
 const statusStyles = {
   OPEN: 'bg-slate-100 text-slate-700 border border-slate-200',
@@ -459,6 +477,7 @@ export default function JudgeDashboard() {
       teams[sub.team_id] = {
         name: sub.team_name,
         productName: sub.product_name,
+        youtubeUrl: sub.youtube_url,
         submissions: [],
       }
     }
@@ -476,9 +495,11 @@ export default function JudgeDashboard() {
   // Files tab grouping: competition category (AI for Engineering / Social / Entrepreneurship)
   const teamCategoryMap = {}
   const productByTeam = {}
+  const youtubeByTeam = {}
   submittedTeams.forEach(t => {
     teamCategoryMap[t.team_id] = t.competition_category
     productByTeam[t.team_id] = t.product_name
+    youtubeByTeam[t.team_id] = t.youtube_url
   })
   const categoryOfTeam = (teamId) => teamCategoryMap[teamId] || 'Uncategorized'
 
@@ -529,7 +550,7 @@ export default function JudgeDashboard() {
     const myScores = evaluation?.scores || []
     return {
       ...t,
-      isAssigned: Boolean(t.is_assigned) || teamSubs.length > 0,
+      isAssigned: true,
       evaluation,
       myTotal: myScores.reduce((sum, s) => sum + (s.score || 0), 0),
       scoredCount: myScores.length,
@@ -538,7 +559,10 @@ export default function JudgeDashboard() {
     }
   }
 
-  const allRows = submittedTeams.map(decorateTeam)
+  // A judge may only see and score the teams assigned to them. The server already
+  // scopes /judges/submitted-teams this way, so this filter is a second line of
+  // defence rather than the only one.
+  const allRows = submittedTeams.filter(t => t.is_assigned).map(decorateTeam)
   const realSubmitters = allRows.filter(t => t.has_files)
   const pendingRows = allRows.filter(t => !t.has_files)
   // Choosing an explicit sort order means the judge wants to see every submitted
@@ -832,6 +856,12 @@ export default function JudgeDashboard() {
                         </span>
                       </p>
                     )}
+                    {(team.youtubeUrl || youtubeByTeam[teamId]) && (
+                      <p className="mt-0.5 flex items-baseline gap-x-2 text-sm">
+                        <span className="font-medium text-slate-500">Demo:</span>
+                        <DemoLink url={team.youtubeUrl || youtubeByTeam[teamId]} className="text-base" />
+                      </p>
+                    )}
                     <p className="mt-1 text-sm text-slate-500">
                       #{teamId} · {filesForTeam(teamId)} file(s) available to you
                     </p>
@@ -1122,6 +1152,12 @@ export default function JudgeDashboard() {
                           <span className="truncate text-sm font-semibold text-indigo-600" title={t.product_name}>
                             {t.product_name}
                           </span>
+                        </p>
+                      )}
+                      {t.youtube_url && (
+                        <p className="mt-0.5 flex items-baseline gap-x-2 text-sm">
+                          <span className="font-medium text-slate-500">Demo:</span>
+                          <DemoLink url={t.youtube_url} />
                         </p>
                       )}
                       <p className="mt-0.5 text-sm text-slate-500">
