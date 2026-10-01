@@ -4,7 +4,7 @@ Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 
 const index = require('./index-h4octwNp.cjs');
 const index$1 = require('./index-BvX4B99v.cjs');
-const fixtures$2 = require('./fixtures-BPyhxdhB.cjs');
+const fixtures$2 = require('./fixtures-CiMIDh4-.cjs');
 require('./index-xm8RU7M2.cjs');
 
 var jsxRuntime = {exports: {}};
@@ -1402,6 +1402,41 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
+// Only ever render a link the browser will follow as a normal web address.
+// Anything else (javascript:, data:) is dropped, so a stored URL can never
+// become a way to run script in the judge's browser.
+function safeExternalUrl(url) {
+  if (!url || typeof url !== 'string') return null
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    if (!parsed.hostname) return null
+    return trimmed
+  } catch {
+    return null
+  }
+}
+
+function DemoLink({ url, className = "" }) {
+  const safe = safeExternalUrl(url);
+  if (!safe) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "a",
+    {
+      href: safe,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      className: `inline-flex items-center gap-1 font-semibold text-rose-600 underline decoration-rose-300 hover:text-rose-700 hover:decoration-rose-500 ${className}`,
+      title: `Open the demo video (${safe})`,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "▶" }),
+        " Watch demo"
+      ]
+    }
+  );
+}
 const statusStyles = {
   OPEN: "bg-slate-100 text-slate-700 border border-slate-200",
   SUBMITTED: "bg-emerald-100 text-emerald-700 border border-emerald-200",
@@ -1785,6 +1820,7 @@ function JudgeDashboard() {
       teams[sub.team_id] = {
         name: sub.team_name,
         productName: sub.product_name,
+        youtubeUrl: sub.youtube_url,
         submissions: []
       };
     }
@@ -1796,9 +1832,11 @@ function JudgeDashboard() {
   ) : teamList;
   const teamCategoryMap = {};
   const productByTeam = {};
+  const youtubeByTeam = {};
   submittedTeams.forEach((t) => {
     teamCategoryMap[t.team_id] = t.competition_category;
     productByTeam[t.team_id] = t.product_name;
+    youtubeByTeam[t.team_id] = t.youtube_url;
   });
   const categoryOfTeam = (teamId) => teamCategoryMap[teamId] || "Uncategorized";
   const teamsWithFiles = filteredTeams.filter(
@@ -1836,7 +1874,7 @@ function JudgeDashboard() {
     const myScores = evaluation?.scores || [];
     return {
       ...t,
-      isAssigned: Boolean(t.is_assigned) || teamSubs.length > 0,
+      isAssigned: true,
       evaluation,
       myTotal: myScores.reduce((sum, s) => sum + (s.score || 0), 0),
       scoredCount: myScores.length,
@@ -1844,7 +1882,7 @@ function JudgeDashboard() {
       isComplete: criteria.length > 0 && myScores.length >= criteria.length
     };
   };
-  const allRows = submittedTeams.map(decorateTeam);
+  const allRows = submittedTeams.filter((t) => t.is_assigned).map(decorateTeam);
   const realSubmitters = allRows.filter((t) => t.has_files);
   const pendingRows = allRows.filter((t) => !t.has_files);
   const sortingAllTeams = sortBy !== "todo";
@@ -2112,6 +2150,10 @@ function JudgeDashboard() {
                       children: team.productName || productByTeam[teamId]
                     }
                   )
+                ] }),
+                (team.youtubeUrl || youtubeByTeam[teamId]) && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-0.5 flex items-baseline gap-x-2 text-sm", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-slate-500", children: "Demo:" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(DemoLink, { url: team.youtubeUrl || youtubeByTeam[teamId], className: "text-base" })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-sm text-slate-500", children: [
                   "#",
@@ -2385,6 +2427,10 @@ function JudgeDashboard() {
                 t.product_name && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-0.5 flex flex-wrap items-baseline gap-x-2", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-medium text-slate-500", children: "Project Name:" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-sm font-semibold text-indigo-600", title: t.product_name, children: t.product_name })
+                ] }),
+                t.youtube_url && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-0.5 flex items-baseline gap-x-2 text-sm", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-slate-500", children: "Demo:" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(DemoLink, { url: t.youtube_url })
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-0.5 text-sm text-slate-500", children: [
                   "#",

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:judge-dashboard": "vite build --config .ssrtest/vite.ssr.config.mjs && node .ssrtest/out/entry.cjs"
+    "test:judge-dashboard": "vite build --config .ssrtest/vite.ssr.config.mjs && node .ssrtest/out/entry.cjs",
+    "test:url-safety": "vite build --config .ssrtest/vite.ssr.config.mjs --ssr .ssrtest/url-safety.js --outDir .ssrtest/out-url --emptyOutDir && node .ssrtest/out-url/entry.cjs"
   },
   "dependencies": {
     "axios": "^1.6.0",

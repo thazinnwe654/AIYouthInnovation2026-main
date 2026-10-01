@@ -30,13 +30,13 @@ async function main() {
   const { createRoot } = await Promise.resolve().then(() => require('./assets/client-D3FfeEPD.cjs')).then(n => n.client);
   const { act } = await Promise.resolve().then(() => require('./assets/test-utils-Dz5_SQw7.cjs')).then(n => n.testUtils);
   const { MemoryRouter } = await Promise.resolve().then(() => require('./assets/index-BvX4B99v.cjs'));
-  const JudgeDashboard = (await Promise.resolve().then(() => require('./assets/JudgeDashboard-BRle2HEN.cjs'))).default;
+  const JudgeDashboard = (await Promise.resolve().then(() => require('./assets/JudgeDashboard-B2tUiwu6.cjs'))).default;
   const errors = [];
   const origError = console.error;
   console.error = (...args) => {
     errors.push(args.map(String).join(" "));
   };
-  const { loadFixtures } = await Promise.resolve().then(() => require('./assets/fixtures-BPyhxdhB.cjs'));
+  const { loadFixtures } = await Promise.resolve().then(() => require('./assets/fixtures-CiMIDh4-.cjs'));
   await loadFixtures();
   console.log("  [harness] fixtures warmed");
   const settle = (container, quietMs = 150, maxMs = 4e3) => act(async () => {
@@ -100,6 +100,10 @@ async function main() {
       console.log("  load error banner:", out.includes("Failed to load"));
       const card = out.match(/Teams to review\s*(\S+)/);
       console.log("  Teams to review  :", card ? card[1] : "n/a");
+      const unassignedHint = out.includes("Not assigned to you") || out.includes("No team to show in this category");
+      const assignedBanner = out.includes("have not been assigned any team yet");
+      console.log("  unassigned-team UI present :", unassignedHint);
+      console.log('  "not assigned yet" message  :', assignedBanner);
       const cats = [];
       const headings = [...container.querySelectorAll("h3")].map((h) => h.textContent.trim()).filter((t) => t.startsWith("AI for"));
       const empties = [...container.querySelectorAll("p")].filter((p) => p.textContent.includes("No submitted team in this category")).length;

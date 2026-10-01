@@ -11,6 +11,7 @@ class TeamCreate(BaseModel):
     name: str
     competition_id: int
     product_name: str = None
+    youtube_url: str = None
 
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -69,6 +70,7 @@ def create_team(
         name=team.name,
         competition_id=team.competition_id,
         product_name=team.product_name,
+        youtube_url=team.youtube_url,
     )
     db.add(new_team)
     db.commit()
@@ -77,6 +79,7 @@ def create_team(
         "id": new_team.id,
         "name": new_team.name,
         "product_name": new_team.product_name,
+        "youtube_url": new_team.youtube_url,
         "competition_id": new_team.competition_id,
     }
 
@@ -101,6 +104,7 @@ def get_my_team(
         "id": team.id,
         "name": team.name,
         "product_name": team.product_name,
+        "youtube_url": team.youtube_url,
         "competition_id": team.competition_id,
         "members": [
             {
@@ -182,6 +186,7 @@ def get_team(
         "id": team.id,
         "name": team.name,
         "product_name": team.product_name,
+        "youtube_url": team.youtube_url,
         "competition_id": team.competition_id,
         "members": [
             {

@@ -225,6 +225,11 @@ class Team(Base):
         nullable=True,
     )
 
+    youtube_url = Column(
+        String,
+        nullable=True,
+    )
+
     competition_id = Column(
         Integer,
         ForeignKey("competitions.id"),

@@ -13,7 +13,10 @@ async function login(email, password) {
   return data.access_token
 }
 
-export async function loadFixtures(email = 'judge1@sti.edu.mm', password = 'judge123') {
+export async function loadFixtures(
+  email = process.env.JUDGE_EMAIL || 'judge1@sti.edu.mm',
+  password = process.env.JUDGE_PASSWORD || 'judge123'
+) {
   const token = await login(email, password)
   const h = { Authorization: `Bearer ${token}` }
   const get = async (p) => {

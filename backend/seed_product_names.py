@@ -26,7 +26,7 @@ PRODUCT_NAMES = {
     "RKD": "Job & Career Advisor",
     "Luminary(Lumi)": "Lumina offline ai learning Tutor",
     "V": "Veridel",
-    "77": "SmartHome Energy Alert System With AI Assistant (Sentinel)",
+    "Min Myanmar Team -2/77": "SmartHome Energy Alert System With AI Assistant (Sentinel)",
     "BlueNode": "DeFlood.AI",
     "BrainGrowth": "BrainGrowth",
     "Emolink": "Emolink",

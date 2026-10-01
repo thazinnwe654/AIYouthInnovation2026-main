@@ -97,6 +97,12 @@ async function main() {
       console.log('  load error banner:', out.includes('Failed to load'))
       const card = out.match(/Teams to review\s*(\S+)/)
       console.log('  Teams to review  :', card ? card[1] : 'n/a')
+      // A judge must never be shown a team they are not assigned to.
+      const unassignedHint = out.includes('Not assigned to you')
+        || out.includes('No team to show in this category')
+      const assignedBanner = out.includes('have not been assigned any team yet')
+      console.log('  unassigned-team UI present :', unassignedHint)
+      console.log('  "not assigned yet" message  :', assignedBanner)
       // Which category headings are on screen, and how many "no submitted team"
       // placeholders are rendered.
       const cats = []

@@ -11,6 +11,36 @@ from sqlalchemy import func, or_
 router = APIRouter(prefix="/competitions", tags=["competitions"])
 
 
+def _scoped_team_ids(db: Session, user: models.User, competition_id: int):
+    """Team ids this user may see for a competition.
+
+    ADMIN and HEAD_JUDGE see the whole competition: they run the scoring process
+    and need the full roster. A plain JUDGE only sees the teams assigned to them,
+    so an unassigned team's name never reaches their browser.
+    """
+    if user.role in (models.UserRole.ADMIN, models.UserRole.HEAD_JUDGE):
+        return None  # None means "no restriction"
+    if user.role != models.UserRole.JUDGE:
+        return set()
+    judge = db.query(models.Judge).filter(models.Judge.user_id == user.id).first()
+    if not judge:
+        return set()
+    return {
+        row[0]
+        for row in db.query(models.JudgeAssignment.team_id)
+        .filter(
+            models.JudgeAssignment.judge_id == judge.id,
+            models.JudgeAssignment.competition_id == competition_id,
+        )
+        .all()
+    }
+
+
+def _product_name(db: Session, team_id: int):
+    row = db.query(models.Team.product_name).filter(models.Team.id == team_id).first()
+    return row[0] if row else None
+
+
 class CompetitionCreate(BaseModel):
     name: str
     category: CompetitionCategory
@@ -145,9 +175,11 @@ def list_competition_teams(
     comp = db.get(models.Competition, competition_id)
     if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
+    allowed = _scoped_team_ids(db, current_user, competition_id)
     return [
         {"id": t.id, "name": t.name, "members_count": len(t.members)}
         for t in comp.teams
+        if allowed is None or t.id in allowed
     ]
 
 
@@ -191,13 +223,19 @@ def leaderboard(
         .filter(models.Team.competition_id == competition_id)
         .all()
     )
+    # A plain JUDGE only sees teams assigned to them. HEAD_JUDGE and ADMIN see
+    # the whole competition so they can run the scoring process.
+    allowed = _scoped_team_ids(db, current_user, competition_id)
     result = []
     for team_id, team_name in teams:
+        if allowed is not None and team_id not in allowed:
+            continue
         total, count = own_totals.get(team_id, (0.0, 0))
         result.append(
             {
                 "team_id": team_id,
                 "team_name": team_name,
+                "product_name": _product_name(db, team_id),
                 "total_score": total,
                 "num_scores": count,
                 "scope": "own",

@@ -139,19 +139,137 @@ def create_assignment(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("ADMIN")),
 ):
-    _get_or_404(db, models.Judge, judge_id)
-    _get_or_404(db, models.Team, team_id)
-    _get_or_404(db, models.Competition, competition_id)
+    """ADMIN: assign one team to one judge.
+
+    Idempotent: judge_assignments is unique on (judge_id, team_id,
+    competition_id), so an existing assignment is reported back instead of
+    letting the insert fail as a 500.
+    """
+    judge = _get_or_404(db, models.Judge, judge_id)
+    team = _get_or_404(db, models.Team, team_id)
+    comp = _get_or_404(db, models.Competition, competition_id)
+
+    # The competition drives which deliverables a judge can reach, so a team
+    # must be assigned under the competition it actually belongs to.
+    if team.competition_id != competition_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"{team.name} belongs to "
+                f"{comp.name if team.competition_id == comp.id else 'another competition'}, "
+                f"not {comp.name}. Pick the matching competition."
+            ),
+        )
+
+    existing = (
+        db.query(models.JudgeAssignment)
+        .filter(
+            models.JudgeAssignment.judge_id == judge.id,
+            models.JudgeAssignment.team_id == team.id,
+            models.JudgeAssignment.competition_id == competition_id,
+        )
+        .first()
+    )
+    if existing:
+        return {
+            "id": existing.id,
+            "created": False,
+            "judge_email": judge.user.email if judge.user else None,
+            "team_name": team.name,
+            "detail": f"{judge.user.email if judge.user else 'This judge'} is already assigned to {team.name}.",
+        }
+
     assignment = models.JudgeAssignment(
-        judge_id=judge_id,
-        team_id=team_id,
+        judge_id=judge.id,
+        team_id=team.id,
         competition_id=competition_id,
-        assigned_by=assigned_by,
+        assigned_by=assigned_by or current_user.id,
     )
     db.add(assignment)
     db.commit()
     db.refresh(assignment)
-    return {"id": assignment.id}
+    _audit_log(
+        db,
+        current_user,
+        "create_assignment",
+        "JudgeAssignment",
+        assignment.id,
+        target_judge_id=judge.id,
+        new_value=f"team {team.name}",
+    )
+    db.commit()
+    return {
+        "id": assignment.id,
+        "created": True,
+        "judge_email": judge.user.email if judge.user else None,
+        "team_name": team.name,
+        "detail": f"Assigned {team.name}.",
+    }
+
+
+@router.delete("/assignments/{assignment_id}")
+def delete_assignment(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("ADMIN")),
+    request: Request = None,
+):
+    """ADMIN: unassign a judge from a team.
+
+    Only the assignment row is removed. Scores the judge already gave are kept,
+    so undoing a mistaken assignment never destroys scoring work. The response
+    reports how many evaluations are now left unassigned so the admin can decide
+    what to do about them.
+    """
+    assignment = db.get(models.JudgeAssignment, assignment_id)
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found"
+        )
+
+    team = db.get(models.Team, assignment.team_id)
+    judge = db.get(models.Judge, assignment.judge_id)
+    judge_email = judge.user.email if judge and judge.user else None
+    team_name = team.name if team else None
+
+    leftover = (
+        db.query(models.Evaluation)
+        .filter(
+            models.Evaluation.judge_id == assignment.judge_id,
+            models.Evaluation.team_id == assignment.team_id,
+            models.Evaluation.competition_id == assignment.competition_id,
+        )
+        .count()
+    )
+
+    db.delete(assignment)
+    db.flush()
+    _audit_log(
+        db,
+        current_user,
+        "delete_assignment",
+        "JudgeAssignment",
+        assignment_id,
+        target_judge_id=assignment.judge_id,
+        old_value=f"{judge_email} assigned to {team_name}",
+        new_value="unassigned",
+    )
+    db.commit()
+    return {
+        "deleted": True,
+        "assignment_id": assignment_id,
+        "judge_email": judge_email,
+        "team_name": team_name,
+        "leftover_evaluations": leftover,
+        "detail": (
+            f"{judge_email} is no longer assigned to {team_name}."
+            + (
+                f" {leftover} evaluation(s) they already scored are kept and now unassigned."
+                if leftover
+                else ""
+            )
+        ),
+    }
 
 
 @router.get("")
@@ -221,19 +339,37 @@ def list_assignments(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("ADMIN")),
 ):
-    """ADMIN: list assignments, optionally filtered by judge."""
+    """ADMIN: list assignments, optionally filtered by judge.
+
+    Each row carries the team, competition and judge names so the admin screen
+    can build a "teams and their judges" table without a second round trip.
+    """
     query = db.query(models.JudgeAssignment)
     if judge_id is not None:
         query = query.filter(models.JudgeAssignment.judge_id == judge_id)
-    return [
-        {
-            "id": a.id,
-            "judge_id": a.judge_id,
-            "team_id": a.team_id,
-            "competition_id": a.competition_id,
-        }
-        for a in query.all()
-    ]
+    result = []
+    for a in query.all():
+        team = db.get(models.Team, a.team_id)
+        comp = db.get(models.Competition, a.competition_id)
+        judge = db.get(models.Judge, a.judge_id)
+        judge_user = db.get(models.User, judge.user_id) if judge else None
+        result.append(
+            {
+                "id": a.id,
+                "judge_id": a.judge_id,
+                "judge_email": judge_user.email if judge_user else None,
+                "judge_role": judge_user.role.value if judge_user else None,
+                "team_id": a.team_id,
+                "team_name": team.name if team else None,
+                "product_name": team.product_name if team else None,
+                "youtube_url": team.youtube_url if team else None,
+                "competition_id": a.competition_id,
+                "competition_name": comp.name if comp else None,
+                "competition_category": comp.category if comp else None,
+                "assigned_at": a.assigned_at,
+            }
+        )
+    return result
 
 
 @router.get("/my-assignments")
@@ -262,6 +398,7 @@ def list_my_assignments(
                 "team_id": a.team_id,
                 "team_name": team.name if team else None,
                 "product_name": team.product_name if team else None,
+                "youtube_url": team.youtube_url if team else None,
                 "competition_id": a.competition_id,
                 "competition_name": comp.name if comp else None,
                 "assigned_at": a.assigned_at,
@@ -383,7 +520,7 @@ def create_evaluation(
     return {"id": evaluation.id}
 
 
-# ─── Score helpers ────────────────────────────────────────────────────────────
+# â”€â”€â”€ Score helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _validate_score(score: float, criterion: models.EvaluationCriteria) -> int:
@@ -432,7 +569,7 @@ def _check_evaluation_editable(
         )
 
 
-# ─── Add / update score (ordinary judge) ─────────────────────────────────────
+# â”€â”€â”€ Add / update score (ordinary judge) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @router.post("/evaluations/{evaluation_id}/scores")
@@ -540,7 +677,7 @@ def clear_evaluation(
     return {"cleared": True, "evaluation_id": evaluation_id, "score_count": score_count}
 
 
-# ─── HEAD_JUDGE: view all judges' scores ─────────────────────────────────────
+# â”€â”€â”€ HEAD_JUDGE: view all judges' scores â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @router.get("/submitted-teams")
@@ -556,6 +693,11 @@ def get_submitted_teams(
     uploaded (`has_files`). Pass `only_with_files=true` to exclude teams that
     still have empty submission rows.
 
+    Scoped to the caller's judge assignments. A plain JUDGE only receives teams
+    assigned to them, so an unassigned team's name and file count never reach
+    their browser. HEAD_JUDGE and ADMIN receive every team, because they run the
+    scoring process and need the full roster.
+
     Read-only visibility only: no file records are returned, so this does not
     widen file download access, which stays restricted to judge assignments.
     """
@@ -568,6 +710,10 @@ def get_submitted_teams(
             .filter(models.JudgeAssignment.judge_id == judge.id)
             .all()
         }
+    sees_every_team = current_user.role in (
+        models.UserRole.HEAD_JUDGE,
+        models.UserRole.ADMIN,
+    )
 
     query = db.query(models.Submission).join(
         models.Deliverable,
@@ -578,6 +724,11 @@ def get_submitted_teams(
 
     teams = {}
     for sub in query.all():
+        # A plain JUDGE only ever sees teams assigned to them. HEAD_JUDGE and
+        # ADMIN keep the full roster, because they run the scoring process and
+        # need to see every team in the competition.
+        if not sees_every_team and sub.team_id not in assigned_team_ids:
+            continue
         deliverable = db.get(models.Deliverable, sub.deliverable_id)
         team = db.get(models.Team, sub.team_id)
         competition = (
@@ -598,6 +749,7 @@ def get_submitted_teams(
                 "team_id": sub.team_id,
                 "team_name": team.name if team else None,
                 "product_name": team.product_name if team else None,
+                "youtube_url": team.youtube_url if team else None,
                 "competition_id": competition_id,
                 "competition_name": competition.name if competition else None,
                 "competition_category": competition.category if competition else None,
@@ -694,7 +846,7 @@ def get_all_judges_scores(
     return result
 
 
-# ─── HEAD_JUDGE: correct another judge's mark ─────────────────────────────────
+# â”€â”€â”€ HEAD_JUDGE: correct another judge's mark â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @router.patch("/evaluations/{evaluation_id}/scores/correct")
@@ -781,7 +933,7 @@ def correct_score(
     }
 
 
-# ─── Evaluation status: lock / finalize / reopen ──────────────────────────────
+# â”€â”€â”€ Evaluation status: lock / finalize / reopen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @router.post("/evaluations/{evaluation_id}/status")
@@ -859,7 +1011,7 @@ def update_evaluation_status(
     return {"id": evaluation.id, "status": evaluation.status, "changed": True}
 
 
-# ─── Audit log for a specific evaluation ──────────────────────────────────────
+# â”€â”€â”€ Audit log for a specific evaluation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @router.get("/evaluations/{evaluation_id}/audit")
@@ -893,7 +1045,7 @@ def get_evaluation_audit(
     ]
 
 
-# ─── List my evaluations ───────────────────────────────────────────────────────
+# â”€â”€â”€ List my evaluations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @router.get("/evaluations")
@@ -998,6 +1150,7 @@ def get_competition_scores(
                 "team_id": team_id,
             "team_name": team.name if team else None,
             "product_name": team.product_name if team else None,
+                "youtube_url": team.youtube_url if team else None,
             "total_score": round(total, 1),
                 "criteria_scores": team_scores,
                 "num_judges": num_judges,
@@ -1079,6 +1232,7 @@ def get_averaged_scores(
                 "team_id": t,
                 "team_name": team.name if team else None,
                 "product_name": team.product_name if team else None,
+                "youtube_url": team.youtube_url if team else None,
                 "criterion_scores": {},
                 "total_score": 0.0,
                 "num_judges": 0,
@@ -1169,6 +1323,7 @@ def get_judge_all_submissions(
                 "team_id": sub.team_id,
                 "team_name": team.name if team else None,
                 "product_name": team.product_name if team else None,
+                "youtube_url": team.youtube_url if team else None,
                 "deliverable_id": sub.deliverable_id,
                 "deliverable_name": deliverable.name if deliverable else None,
                 "deliverable_category": deliverable.category if deliverable else None,

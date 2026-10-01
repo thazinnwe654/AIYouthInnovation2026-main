@@ -48,6 +48,7 @@ storage/
 # Frontend build output
 dist/
 .ssrtest/out/
+.ssrtest/out-url/
 
 # OS
 .DS_Store
