@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -16,6 +17,12 @@ from ..security import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def normalize_email(email: str) -> str:
+    """Normalize a submitted email so stray whitespace or capitalization
+    cannot turn a correct password into "Invalid credentials"."""
+    return (email or "").strip().lower()
+
+
 @router.post("/login")
 @limiter.limit(get_limit("RATE_LIMIT_LOGIN", "5/minute"))
 def login(
@@ -23,7 +30,12 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    email = normalize_email(form_data.username)
+    user = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email)
+        .first()
+    )
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
@@ -50,7 +62,8 @@ def register(
     # Self-registration is restricted to TEAM_MEMBER accounts only.
     # Admin/Judge accounts must be created via the admin endpoints to
     # prevent privilege escalation.
-    existing = db.query(models.User).filter(models.User.email == email).first()
+    email = normalize_email(email)
+    existing = db.query(models.User).filter(func.lower(models.User.email) == email).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered"

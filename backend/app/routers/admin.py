@@ -42,7 +42,8 @@ def create_user(
 ):
     if role not in models.UserRole.__members__:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
-    if db.query(models.User).filter(models.User.email == email).first():
+    email = (email or "").strip().lower()
+    if db.query(models.User).filter(func.lower(models.User.email) == email).first():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     user = models.User(
         email=email,

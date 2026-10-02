@@ -98,6 +98,15 @@ Admin can reset any user's password via the API or admin UI. Judges can be creat
 - **Implementation**: `backend/app/security.py`
 - Passwords are never stored in plaintext
 
+### Email Normalization
+
+- On login, the submitted email is trimmed and lowercased before the lookup, so surrounding whitespace or
+  capitalization cannot turn correct credentials into `Invalid credentials`
+- Passwords are **not** trimmed — leading/trailing spaces are part of the password
+- Emails are also stored normalized by `/auth/register` and `POST /admin/users` so the same address
+  cannot be registered twice with different capitalization
+- A wrong password and an unknown email both return `401 Invalid credentials` (no user enumeration)
+
 ### CORS
 
 Configured in `backend/app/main.py`:
