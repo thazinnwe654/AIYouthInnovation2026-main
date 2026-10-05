@@ -110,7 +110,6 @@ export default function JudgeDashboard() {
   const [fileCategory, setFileCategory] = useState('all')
   const [scoreFilter, setScoreFilter] = useState('all')
   const [sortBy, setSortBy] = useState('todo')
-  const [showEmptySubmissions, setShowEmptySubmissions] = useState(false)
   const [scoreCategory, setScoreCategory] = useState('all')
   const [localScores, setLocalScores] = useState({})
   const [notes, setNotes] = useState({})
@@ -567,7 +566,7 @@ export default function JudgeDashboard() {
   // Choosing an explicit sort order means the judge wants to see every submitted
   // team, otherwise there is nothing to sort (e.g. only one team has files).
   const sortingAllTeams = sortBy !== 'todo'
-  const baseRows = (showEmptySubmissions || sortingAllTeams) ? allRows : realSubmitters
+  const baseRows = sortingAllTeams ? allRows : realSubmitters
 
   const sortedRows = baseRows.slice().sort((a, b) => {
     if (sortBy === 'name') return String(a.team_name || '').localeCompare(String(b.team_name || ''))
@@ -667,7 +666,7 @@ export default function JudgeDashboard() {
     { label: 'Teams to review', value: reviewTotal, tone: 'indigo' },
     { label: 'Scored', value: reviewDone, tone: 'sky' },
     { label: 'Left to score', value: reviewLeft, tone: 'emerald' },
-    { label: 'Files waiting', value: reviewFiles, tone: 'amber' },
+    { label: 'Total Files', value: reviewFiles, tone: 'amber' },
   ]
 
   return (
@@ -1013,15 +1012,6 @@ export default function JudgeDashboard() {
                 {sortOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
               </select>
 
-              {pendingRows.length > 0 && (
-                <button
-                  onClick={() => setShowEmptySubmissions(v => !v)}
-                  className={`rounded-lg px-2.5 py-1.5 text-sm font-medium transition ${showEmptySubmissions ? 'bg-slate-700 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
-                >
-                  No files ({pendingRows.length})
-                </button>
-              )}
-
               {hasActiveFilter && (
                 <button
                   onClick={() => { setSearchTeam(''); setScoreFilter('all'); setScoreCategory('all') }}
@@ -1106,14 +1096,6 @@ export default function JudgeDashboard() {
                           ? `${catStat.teams - catStat.withFiles} team(s) here have not uploaded a file yet.`
                           : 'No team has uploaded a file in this category yet.'}
                       </p>
-                      {catStat && catStat.teams > 0 && (
-                        <button
-                          onClick={() => setShowEmptySubmissions(true)}
-                          className="mt-3 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
-                        >
-                          Show {catStat.teams} team(s) without files
-                        </button>
-                      )}
                     </div>
                   </Fragment>
                 )

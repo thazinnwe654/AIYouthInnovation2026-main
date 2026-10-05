@@ -64,7 +64,7 @@ export default function Scoreboard() {
       {compId && !loading && scores.length > 0 && (
         <>
           <div className="mb-4 text-sm text-gray-600">
-            {scores.length} team(s) ranked | Total score: weighted average out of 100
+            {scores.length} team(s) ranked | Total Score / 100
           </div>
 
           <div className="overflow-x-auto border rounded-lg">

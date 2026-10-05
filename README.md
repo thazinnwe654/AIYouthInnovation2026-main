@@ -238,7 +238,7 @@ Migrations support both SQLite (development) and PostgreSQL (production) dialect
 ### 6. Evaluation
 
 - Judge enters a score per team per criterion in the dashboard
-- Each criterion has its own maximum point value; scores must be between 0 and that criterion's maximum
+- Each criterion has its own maximum point value; scores must be whole numbers between 1 and that criterion's maximum
 - Score submits automatically on blur (onBlur event)
 - Scores appear inline in the dashboard table
 
@@ -251,6 +251,31 @@ Migrations support both SQLite (development) and PostgreSQL (production) dialect
 | **Presentation** | 25 | Clarity, delivery, and quality of the demonstration |
 | **Impact** | 20 | Potential real-world benefit and scalability |
 | **Total** | **100** | Sum of all criterion scores |
+
+#### How a Team's Total Score Is Computed
+
+The criterion maximums (30 / 25 / 25 / 20) *are* the weights, so they must not be
+applied a second time. The team total is the plain sum of the per-criterion
+averages:
+
+```
+avg_c = mean of every score submitted for criterion c
+total = SUM over criteria of avg_c        # out of SUM(max points) = 100
+```
+
+This is mathematically identical to averaging each judge's personal total:
+
+```
+total = mean over judges of (S_innovation + S_feasibility + S_presentation + S_impact)
+```
+
+Two consequences worth knowing:
+
+- A criterion nobody scored contributes `0`, not an exclusion. A team scored on
+  only 2 of 4 criteria will show roughly half the available points.
+- Nothing is persisted. Totals and ranks are recomputed from the raw
+  `evaluation_scores` rows on every request, so a correction immediately
+  changes the ranking even after the evaluation is `FINALIZED`.
 
 #### Evaluation Lifecycle (Head Judge / Admin controls)
 

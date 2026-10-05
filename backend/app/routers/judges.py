@@ -1205,7 +1205,13 @@ def get_averaged_scores(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(_require_head_judge_or_admin),
 ):
-    """HEAD_JUDGE or ADMIN: weighted average scores per team across all judges."""
+    """HEAD_JUDGE or ADMIN: averaged criterion scores per team across all judges.
+
+    Judges score each criterion out of that criterion's weight, so the weights
+    already encode the weighting and must not be applied a second time. The team
+    total is therefore the plain sum of the per-criterion averages, and max_score
+    is the sum of all criterion weights.
+    """
     evaluations = (
         db.query(models.Evaluation)
         .filter(models.Evaluation.competition_id == competition_id)
@@ -1238,11 +1244,14 @@ def get_averaged_scores(
                 "num_judges": 0,
             }
 
-    for ev in evaluations:
-        t = ev.team_id
-        team_data[t]["num_judges"] = len(
-            set(e.judge_id for e in evaluations if e.team_id == t)
+    scored_judges = {}
+    for s in scores:
+        scored_judges.setdefault(s.evaluation.team_id, set()).add(
+            s.evaluation.judge_id
         )
+    for t, judge_ids in scored_judges.items():
+        if t in team_data:
+            team_data[t]["num_judges"] = len(judge_ids)
 
     for s in scores:
         t = s.evaluation.team_id
@@ -1254,20 +1263,17 @@ def get_averaged_scores(
 
     result = []
     for t, data in team_data.items():
-        weighted_total = 0.0
+        total = 0.0
         for crit_name, vals in data["criterion_scores"].items():
             avg = sum(vals) / len(vals) if vals else 0.0
-            weight = crit_map.get(crit_name, 0)
             data["criterion_scores"][crit_name] = {
                 "avg": round(avg, 1),
                 "count": len(vals),
-                "weight": weight,
+                "weight": crit_map.get(crit_name, 0),
             }
-            weighted_total += avg * weight
-        data["total_score"] = (
-            round(weighted_total / total_weight, 1) if total_weight else 0.0
-        )
-        data["max_score"] = 100
+            total += avg
+        data["total_score"] = round(total, 1)
+        data["max_score"] = total_weight
         data["competition_name"] = comp.name if comp else None
         result.append(data)
 
