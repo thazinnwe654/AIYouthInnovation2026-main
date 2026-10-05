@@ -1447,9 +1447,8 @@ const statusStyles = {
 };
 const scoreFilters = [
   { key: "all", label: "All" },
-  { key: "todo", label: "Not finished" },
-  { key: "done", label: "Completed" },
-  { key: "mine", label: "Assigned to me" }
+  { key: "todo", label: "Unscored" },
+  { key: "done", label: "Completed" }
 ];
 const sortOptions = [
   { key: "todo", label: "Unscored first" },
@@ -1899,7 +1898,6 @@ function JudgeDashboard() {
       (t) => String(t.team_id) === String(searchTeam) || String(t.team_name || "").toLowerCase().includes(searchTeam.toLowerCase())
     );
   }
-  if (scoreFilter === "mine") visibleScoreRows = visibleScoreRows.filter((t) => t.isAssigned);
   if (scoreFilter === "todo") visibleScoreRows = visibleScoreRows.filter((t) => t.isAssigned && !t.isComplete);
   if (scoreFilter === "done") visibleScoreRows = visibleScoreRows.filter((t) => t.isAssigned && t.isComplete);
   const categoryOf = (t) => t.competition_category || "Uncategorized";

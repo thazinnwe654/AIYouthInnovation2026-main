@@ -457,8 +457,12 @@ def test_environment_variables_read_correctly():
     os.environ["RATE_LIMIT_UPLOAD"] = "20/minute"
     os.environ["RATE_LIMIT_DEFAULT"] = "3/minute"
 
+    # _import_rate_limiter() reloads the module, which runs load_dotenv() and can
+    # inject values from the local .env. Remove this one so the fallback is tested.
+    previous_correction = os.environ.pop("RATE_LIMIT_CORRECT_SCORE", None)
     try:
         rl = _import_rate_limiter()
+        os.environ.pop("RATE_LIMIT_CORRECT_SCORE", None)
         assert rl.get_limit("RATE_LIMIT_LOGIN", "5/minute") == "10/minute"
         assert rl.get_limit("RATE_LIMIT_UPLOAD", "10/minute") == "20/minute"
         assert rl.get_limit("RATE_LIMIT_DEFAULT", "5/minute") == "3/minute"
@@ -468,6 +472,8 @@ def test_environment_variables_read_correctly():
         del os.environ["RATE_LIMIT_LOGIN"]
         del os.environ["RATE_LIMIT_UPLOAD"]
         del os.environ["RATE_LIMIT_DEFAULT"]
+        if previous_correction is not None:
+            os.environ["RATE_LIMIT_CORRECT_SCORE"] = previous_correction
 
 
 if __name__ == "__main__":

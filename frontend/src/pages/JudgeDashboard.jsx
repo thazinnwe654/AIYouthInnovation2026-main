@@ -47,9 +47,8 @@ const statusStyles = {
 
 const scoreFilters = [
   { key: 'all', label: 'All' },
-  { key: 'todo', label: 'Not finished' },
+  { key: 'todo', label: 'Unscored' },
   { key: 'done', label: 'Completed' },
-  { key: 'mine', label: 'Assigned to me' },
 ]
 
 const sortOptions = [
@@ -584,7 +583,6 @@ export default function JudgeDashboard() {
       String(t.team_name || '').toLowerCase().includes(searchTeam.toLowerCase())
     )
   }
-  if (scoreFilter === 'mine') visibleScoreRows = visibleScoreRows.filter(t => t.isAssigned)
   if (scoreFilter === 'todo') visibleScoreRows = visibleScoreRows.filter(t => t.isAssigned && !t.isComplete)
   if (scoreFilter === 'done') visibleScoreRows = visibleScoreRows.filter(t => t.isAssigned && t.isComplete)
 

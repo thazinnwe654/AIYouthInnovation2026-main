@@ -60,25 +60,36 @@ def get_rate_limit_storage_description() -> str:
     return "configured storage backend"
 
 
-def _detect_worker_count() -> int:
-    """Return the number of worker processes from env vars or CLI args."""
-    for env_var in ("WEB_CONCURRENCY", "WORKERS"):
-        value = os.getenv(env_var)
-        if value and value.strip().isdigit():
-            return int(value.strip())
-
-    args = sys.argv[1:]
-    for i, arg in enumerate(args):
-        if arg in ("--workers", "-w") and i + 1 < len(args):
+def _workers_from_argv(argv) -> int | None:
+    """Return the worker count passed on the command line, if any."""
+    for i, arg in enumerate(argv):
+        if arg in ("--workers", "-w") and i + 1 < len(argv):
             try:
-                return int(args[i + 1])
+                return int(argv[i + 1])
             except ValueError:
-                pass
+                return None
         if arg.startswith("--workers="):
             try:
                 return int(arg.split("=", 1)[1])
             except ValueError:
-                pass
+                return None
+    return None
+
+
+def _detect_worker_count() -> int:
+    """Return the number of worker processes.
+
+    Mirrors uvicorn's own precedence: an explicit --workers/-w command-line
+    option wins over WEB_CONCURRENCY/WORKERS, which are only fallbacks.
+    """
+    from_cli = _workers_from_argv(sys.argv[1:])
+    if from_cli is not None:
+        return from_cli
+
+    for env_var in ("WEB_CONCURRENCY", "WORKERS"):
+        value = os.getenv(env_var)
+        if value and value.strip().isdigit():
+            return int(value.strip())
 
     return 1
 

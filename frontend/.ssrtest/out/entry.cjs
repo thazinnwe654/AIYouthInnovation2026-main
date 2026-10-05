@@ -30,7 +30,7 @@ async function main() {
   const { createRoot } = await Promise.resolve().then(() => require('./assets/client-D3FfeEPD.cjs')).then(n => n.client);
   const { act } = await Promise.resolve().then(() => require('./assets/test-utils-Dz5_SQw7.cjs')).then(n => n.testUtils);
   const { MemoryRouter } = await Promise.resolve().then(() => require('./assets/index-BvX4B99v.cjs'));
-  const JudgeDashboard = (await Promise.resolve().then(() => require('./assets/JudgeDashboard-B2tUiwu6.cjs'))).default;
+  const JudgeDashboard = (await Promise.resolve().then(() => require('./assets/JudgeDashboard-8zHELIwx.cjs'))).default;
   const errors = [];
   const origError = console.error;
   console.error = (...args) => {

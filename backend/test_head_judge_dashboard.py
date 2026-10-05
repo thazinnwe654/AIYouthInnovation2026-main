@@ -64,6 +64,17 @@ def result(msg, ok):
     RESULTS.append(("PASS" if ok else "FAIL", msg))
 
 
+def first_assignment(token, competition_id=None):
+    """Return the first (team_id, competition_id) the judge is actually assigned to."""
+    for a in get("/judges/my-assignments", token):
+        if competition_id is None or a["competition_id"] == competition_id:
+            return a["team_id"], a["competition_id"]
+    raise AssertionError(
+        f"judge has no assignment in competition {competition_id}; "
+        "assign teams via POST /judges/assignments before running this suite"
+    )
+
+
 hjt = login("judge1@sti.edu.mm", "judge123")
 jt2 = login("judge2@sti.edu.mm", "judge123")
 jt3 = login("judge3@sti.edu.mm", "judge123")
@@ -71,18 +82,26 @@ at = login("admin@sti.edu.mm", "admin123")
 tm_t = login("team1@sti.edu.mm", "team123")
 print("Login OK")
 
-# Create a fresh evaluation for testing
-# team_id=2=Beyond X (comp_id=3), owned by judge1 (HEAD_JUDGE)
+# Create a fresh evaluation for testing.
+# Judge assignments are admin-managed data, so the team is resolved from the
+# judge's real assignment list instead of being hardcoded.
+HEAD_TEAM_ID, HEAD_COMP_ID = first_assignment(hjt, 3)
 eval_result = post(
-    "/judges/evaluations/mine", hjt, {"team_id": "2", "competition_id": "3"}
+    "/judges/evaluations/mine",
+    hjt,
+    {"team_id": str(HEAD_TEAM_ID), "competition_id": str(HEAD_COMP_ID)},
 )
 EVAL_ID = eval_result["id"]
-print(f"Created test evaluation id={EVAL_ID}")
+print(f"Created test evaluation id={EVAL_ID} (team {HEAD_TEAM_ID}, comp {HEAD_COMP_ID})")
 
-# team_id=1=Technologia Ventures (comp_id=3), owned by judge2
+# A second judge needs an evaluation too, so H12 can prove all-scores spans judges.
+JT2_TEAM_ID, JT2_COMP_ID = first_assignment(jt2, 3)
 jt2_eval = post(
-    "/judges/evaluations/mine", jt2, {"team_id": "1", "competition_id": "3"}
+    "/judges/evaluations/mine",
+    jt2,
+    {"team_id": str(JT2_TEAM_ID), "competition_id": str(JT2_COMP_ID)},
 )
+print(f"Second judge evaluation id={jt2_eval['id']} (team {JT2_TEAM_ID}, comp {JT2_COMP_ID})")
 
 # H1: HEAD_JUDGE can view all-scores for comp 3
 scores = get("/judges/all-scores?competition_id=3", hjt)
